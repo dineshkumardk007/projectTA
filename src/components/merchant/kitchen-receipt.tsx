@@ -4,13 +4,27 @@ import * as React from 'react';
 import type { BoardOrder } from '@/components/merchant/order-board';
 import { formatMinor } from '@/lib/domain/money';
 
+/**
+ * The on-screen kitchen ticket.
+ *
+ * Two ways out of here, and which one is primary depends on the shop. A counter
+ * with a paired ESC/POS printer gets a direct thermal print — one tap, no dialog,
+ * no driver. Everyone else gets the browser print dialog, which is slower but
+ * works on any device with any printer. The fallback is never removed: thermal
+ * printing needs Chromium and a paired device, and neither can be assumed at
+ * 8 AM on a borrowed tablet.
+ */
 export function KitchenReceiptModal({
   order,
   shopName,
+  hasThermalPrinter = false,
+  onThermalPrint,
   onClose,
 }: {
   order: BoardOrder;
   shopName: string;
+  hasThermalPrinter?: boolean;
+  onThermalPrint?: () => void | Promise<unknown>;
   onClose: () => void;
 }) {
   const handlePrint = () => {
@@ -64,21 +78,37 @@ export function KitchenReceiptModal({
         </div>
 
         {/* Modal Controls */}
-        <div className="flex gap-2 pt-2">
-          <button
-            type="button"
-            onClick={handlePrint}
-            className="flex-1 rounded-lg bg-black px-4 py-2.5 text-sm font-bold text-white hover:bg-gray-800"
-          >
-            🖨️ Print Thermal Receipt
-          </button>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-bold text-gray-700 hover:bg-gray-100"
-          >
-            Close
-          </button>
+        <div className="space-y-2 pt-2">
+          {hasThermalPrinter && onThermalPrint ? (
+            <button
+              type="button"
+              onClick={() => void onThermalPrint()}
+              className="w-full rounded-lg bg-black px-4 py-2.5 text-sm font-bold text-white hover:bg-gray-800"
+            >
+              🖨️ Print to thermal printer
+            </button>
+          ) : null}
+
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={handlePrint}
+              className={
+                hasThermalPrinter
+                  ? 'flex-1 rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-bold text-gray-700 hover:bg-gray-100'
+                  : 'flex-1 rounded-lg bg-black px-4 py-2.5 text-sm font-bold text-white hover:bg-gray-800'
+              }
+            >
+              {hasThermalPrinter ? 'Print dialog instead' : '🖨️ Print receipt'}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-bold text-gray-700 hover:bg-gray-100"
+            >
+              Close
+            </button>
+          </div>
         </div>
       </div>
     </div>

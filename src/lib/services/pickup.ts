@@ -62,9 +62,15 @@ export async function renderPickupQr(token: string): Promise<string> {
   });
 }
 
-/** The permanent poster QR for a shop — deep links straight to its menu. */
-export async function renderShopQr(slug: string): Promise<{ url: string; dataUrl: string }> {
-  const url = `${env.NEXT_PUBLIC_APP_URL}/shops/${slug}?via=qr`;
+/**
+ * The permanent poster QR for a shop — deep links straight to its menu.
+ *
+ * Encodes `/s/<publicQrToken>`, not the shop's slug. Two reasons: the token
+ * survives a rename (a printed poster cannot be reissued), and the redirect
+ * behind it is what credits the order to the poster instead of to app search.
+ */
+export async function renderShopQr(publicQrToken: string): Promise<{ url: string; dataUrl: string }> {
+  const url = `${env.NEXT_PUBLIC_APP_URL}/s/${publicQrToken}`;
   const dataUrl = await QRCode.toDataURL(url, {
     errorCorrectionLevel: 'H',
     margin: 1,

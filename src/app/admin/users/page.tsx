@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { db } from '@/lib/db';
 import { Badge, Card } from '@/components/ui/primitives';
 import { UserActiveAction } from '@/components/admin/row-actions';
@@ -18,8 +19,16 @@ export default async function AdminUsersPage() {
       role: true,
       isActive: true,
       createdAt: true,
+      lastLoginAt: true,
+      loginCount: true,
       customerProfile: {
-        select: { ordersPlaced: true, ordersCompleted: true, ordersCancelled: true, ordersAbandoned: true },
+        select: {
+          ordersPlaced: true,
+          ordersCompleted: true,
+          ordersCancelled: true,
+          ordersAbandoned: true,
+          isCashOnPickupBlocked: true,
+        },
       },
     },
   });
@@ -41,13 +50,21 @@ export default async function AdminUsersPage() {
               <th scope="col" className="px-4 py-3 font-semibold">Contact</th>
               <th scope="col" className="px-4 py-3 font-semibold">Role</th>
               <th scope="col" className="px-4 py-3 font-semibold">Reliability</th>
+              <th scope="col" className="px-4 py-3 font-semibold">Sign-ins</th>
               <th scope="col" className="px-4 py-3 font-semibold">Account</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
             {users.map((user) => (
               <tr key={user.id}>
-                <td className="px-4 py-3 font-semibold">{user.name}</td>
+                <td className="px-4 py-3 font-semibold">
+                  <Link href={`/admin/users/${user.id}`} className="hover:underline">
+                    {user.name}
+                  </Link>
+                  {user.customerProfile?.isCashOnPickupBlocked ? (
+                    <p className="mt-0.5 text-xs font-normal text-warning-600">Cash on pickup blocked</p>
+                  ) : null}
+                </td>
                 <td className="px-4 py-3 text-muted">
                   <p>{user.email}</p>
                   <p className="text-xs">{user.phone ?? '—'}</p>
@@ -65,6 +82,21 @@ export default async function AdminUsersPage() {
                       {user.customerProfile.ordersAbandoned > 0
                         ? ` · ${user.customerProfile.ordersAbandoned} not collected`
                         : ''}
+                    </>
+                  ) : (
+                    '—'
+                  )}
+                </td>
+                <td className="px-4 py-3 text-xs tabular-nums text-muted">
+                  {user.loginCount > 0 ? (
+                    <>
+                      {user.loginCount}
+                      <p>
+                        last{' '}
+                        {user.lastLoginAt
+                          ? user.lastLoginAt.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })
+                          : '—'}
+                      </p>
                     </>
                   ) : (
                     '—'

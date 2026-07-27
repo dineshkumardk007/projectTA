@@ -1,11 +1,13 @@
 import 'server-only';
-import type { Prisma } from '@prisma/client';
+import type { BoostSlotType, Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
 import { estimatePrepMinutes } from '@/lib/domain/prep-time';
 import { getOrderability, type Orderability } from '@/lib/domain/shop-availability';
 import { haversineKm, type LatLng } from '@/lib/providers/maps';
 import { ACTIVE_STATUSES } from '@/lib/domain/order-status';
 import { shopLocalDate } from '@/lib/domain/local-date';
+import { getLiveBoostsForShops } from '@/lib/services/boosts';
+import { sweepExpiredSubscriptions } from '@/lib/services/subscription';
 
 /**
  * Read models for shop discovery.
@@ -37,6 +39,11 @@ export type ShopSummary = {
   activeOrders: number;
   distanceKm: number | null;
   isFavorite: boolean;
+  /**
+   * Set when the shop has paid for a featured slot that is running right now.
+   * Drives both the "Featured today" badge and the pin to the top of the list.
+   */
+  featuredSlot: BoostSlotType | null;
   popularItems: string[];
   /**
    * What the shop is pushing today. Surfaced on the discovery card as tappable
@@ -82,6 +89,11 @@ export async function listShops(options: {
 }): Promise<ShopSummary[]> {
   const { filters = {}, location = null, viewerId = null, limit = 60 } = options;
 
+  // Fire-and-forget, throttled to once every ten minutes: hides shops whose
+  // subscription has lapsed and restores those that have renewed. Deliberately
+  // not awaited — discovery must not wait on billing housekeeping.
+  sweepExpiredSubscriptions();
+
   /**
    * Everything that *can* be expressed as a query goes into the query.
    *
@@ -124,7 +136,7 @@ export async function listShops(options: {
 
   const shopIds = shops.map((shop) => shop.id);
 
-  const [favorites, activeCounts] = await Promise.all([
+  const [favorites, activeCounts, boostedShops] = await Promise.all([
     viewerId
       ? db.favoriteShop.findMany({
           where: { userId: viewerId, shopId: { in: shopIds } },
@@ -138,6 +150,7 @@ export async function listShops(options: {
       where: { shopId: { in: shopIds }, status: { in: ACTIVE_STATUSES } },
       _count: { _all: true },
     }),
+    getLiveBoostsForShops(shopIds),
   ]);
 
   const favoriteIds = new Set(favorites.map((f) => f.shopId));
@@ -182,6 +195,7 @@ export async function listShops(options: {
       activeOrders,
       distanceKm: location ? Number(haversineKm(location, shop).toFixed(2)) : null,
       isFavorite: favoriteIds.has(shop.id),
+      featuredSlot: boostedShops.get(shop.id) ?? null,
       popularItems: shop.products.filter((p) => p.isPopular).slice(0, 3).map((p) => p.name),
       // `specialOn` holds the date the item was flagged for, so a stale flag
       // simply stops matching once the shop's day rolls over — no cleanup job.
@@ -203,6 +217,14 @@ export async function listShops(options: {
     // Shops that cannot take an order right now always sort last, whatever the
     // chosen order — showing a closed shop first wastes the customer's time.
     if (a.orderability.canOrder !== b.orderability.canOrder) return a.orderability.canOrder ? -1 : 1;
+
+    // Paid placement ranks *below* orderability and nothing else. A boosted shop
+    // that is closed, or too far to be useful, still sorts behind one that can
+    // actually hand the customer their tea — the slot is worth selling only for
+    // as long as customers keep trusting the list.
+    const aFeatured = a.featuredSlot != null;
+    const bFeatured = b.featuredSlot != null;
+    if (aFeatured !== bFeatured) return aFeatured ? -1 : 1;
 
     if (sort === 'nearest' && a.distanceKm != null && b.distanceKm != null) {
       return a.distanceKm - b.distanceKm;

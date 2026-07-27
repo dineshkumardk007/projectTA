@@ -15,6 +15,20 @@ import { cn } from '@/lib/cn';
 import { playOrderChime } from '@/lib/utils/sound';
 import { generateWhatsAppLink } from '@/lib/services/whatsapp';
 import { KitchenReceiptModal } from '@/components/merchant/kitchen-receipt';
+import { buildKitchenTicket } from '@/lib/domain/escpos';
+import {
+  connectBluetoothPrinter,
+  connectSerialPrinter,
+  connectedPrinter,
+  disconnectPrinter,
+  getAutoPrint,
+  getPaperWidth,
+  printBytes,
+  printerSupport,
+  setAutoPrint,
+  setPaperWidth,
+  type ConnectedPrinter,
+} from '@/lib/utils/thermal-printer';
 
 /**
  * The merchant order board.
@@ -67,7 +81,7 @@ const TABS: { key: Tab; label: string; statuses: OrderStatus[] }[] = [
   { key: 'COMPLETED', label: 'Completed', statuses: ['PICKED_UP', 'REJECTED', 'CANCELLED', 'EXPIRED'] },
 ];
 
-export function OrderBoard({ shopId }: { shopId: string }) {
+export function OrderBoard({ shopId, shopName }: { shopId: string; shopName: string }) {
   const [orders, setOrders] = React.useState<BoardOrder[] | null>(null);
   const [stats, setStats] = React.useState<BoardStats | null>(null);
   const [tab, setTab] = React.useState<Tab>('NEW');
@@ -75,6 +89,8 @@ export function OrderBoard({ shopId }: { shopId: string }) {
   const [rejecting, setRejecting] = React.useState<BoardOrder | null>(null);
   const [delaying, setDelaying] = React.useState<BoardOrder | null>(null);
   const [printingOrder, setPrintingOrder] = React.useState<BoardOrder | null>(null);
+  const [printer, setPrinter] = React.useState<ConnectedPrinter | null>(null);
+  const [autoPrint, setAutoPrintState] = React.useState(false);
   const [soundEnabled, setSoundEnabled] = React.useState<boolean>(() => {
     if (typeof window === 'undefined') return true;
     return localStorage.getItem('takeaway_merchant_sound') !== 'false';
@@ -84,6 +100,62 @@ export function OrderBoard({ shopId }: { shopId: string }) {
 
   const previousNewCount = React.useRef<number | null>(null);
   const soundEnabledRef = React.useRef<boolean>(soundEnabled);
+
+  // Restored on mount rather than in a `useState` initialiser: `localStorage`
+  // does not exist during the server render.
+  React.useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setAutoPrintState(getAutoPrint());
+    setPrinter(connectedPrinter());
+  }, []);
+
+  /**
+   * Prints one order's kitchen slip.
+   *
+   * Returns whether it printed. Callers use that to decide between staying quiet
+   * and opening the on-screen preview — a failed print during a rush must not
+   * leave the kitchen with nothing.
+   */
+  const printTicket = React.useCallback(
+    async (order: BoardOrder, { silent = false }: { silent?: boolean } = {}) => {
+      if (!connectedPrinter()) {
+        if (!silent) toast('No printer connected. Use "Connect printer" first.', 'error');
+        return false;
+      }
+
+      try {
+        await printBytes(
+          buildKitchenTicket({
+            shopName,
+            orderCode: order.code,
+            placedAt: new Date(order.placedAt),
+            customerName: order.customerName,
+            customerPhone: order.customerPhone,
+            paymentLabel:
+              order.paymentMethod === 'CASH_ON_PICKUP' ? 'Cash at counter' : 'Paid / paying online',
+            totalLabel: formatMinor(order.totalMinor),
+            items: order.items.map((item) => ({
+              name: item.name,
+              quantity: item.quantity,
+              note: item.options.map((option) => option.optionName).join(', ') || undefined,
+            })),
+            customListText: order.customListText,
+            customerNote: order.customerNote,
+            columns: getPaperWidth(),
+          }),
+        );
+        if (!silent) toast(`Kitchen slip printed for ${order.code}`);
+        return true;
+      } catch (error) {
+        toast(error instanceof Error ? error.message : 'The slip could not be printed.', 'error');
+        // A dead handle stays dead until it is paired again; clearing it stops
+        // every later order failing the same way in silence.
+        setPrinter(connectedPrinter());
+        return false;
+      }
+    },
+    [shopName, toast],
+  );
 
   const toggleSound = () => {
     const next = !soundEnabled;
@@ -177,6 +249,34 @@ export function OrderBoard({ shopId }: { shopId: string }) {
         REJECTED: `Order ${order.code} rejected`,
       };
       toast(messages[to] ?? 'Order updated');
+
+      // Accepting is the moment the kitchen needs the slip — before the food is
+      // started, not after. Silent because the merchant just tapped Accept and
+      // does not need a second confirmation for something that worked.
+      if (to === 'ACCEPTED' && getAutoPrint()) {
+        void printTicket(order, { silent: true });
+      }
+
+      // READY is the one status a customer is actively waiting on, so this is
+      // where the WhatsApp message is worth the tap. It opens a pre-filled chat
+      // rather than sending by itself: WhatsApp will not let a web app send on
+      // someone's behalf, and pretending otherwise would mean promising the
+      // merchant a message that never left.
+      if (to === 'READY' && order.customerPhone) {
+        window.open(
+          generateWhatsAppLink({
+            phone: order.customerPhone,
+            customerName: order.customerName,
+            orderCode: order.code,
+            shopName,
+            status: 'READY',
+            totalMinor: order.totalMinor,
+            trackingUrl: `${window.location.origin}/orders/${order.id}`,
+          }),
+          '_blank',
+          'noopener,noreferrer',
+        );
+      }
 
       await load();
       router.refresh();
@@ -315,6 +415,16 @@ export function OrderBoard({ shopId }: { shopId: string }) {
         </button>
       </div>
 
+      <PrinterBar
+        printer={printer}
+        autoPrint={autoPrint}
+        onConnected={(connected) => setPrinter(connected)}
+        onAutoPrintChange={(enabled) => {
+          setAutoPrint(enabled);
+          setAutoPrintState(enabled);
+        }}
+      />
+
       {visible.length === 0 ? (
         <EmptyState
           title={
@@ -334,6 +444,7 @@ export function OrderBoard({ shopId }: { shopId: string }) {
             <OrderCard
               key={order.id}
               order={order}
+              shopName={shopName}
               busy={busyOrderId === order.id}
               onTransition={(to) => transition(order, to)}
               onReject={() => setRejecting(order)}
@@ -369,11 +480,126 @@ export function OrderBoard({ shopId }: { shopId: string }) {
       {printingOrder ? (
         <KitchenReceiptModal
           order={printingOrder}
-          shopName="Takeaway Store"
+          shopName={shopName}
+          hasThermalPrinter={printer != null}
+          onThermalPrint={() => printTicket(printingOrder)}
           onClose={() => setPrintingOrder(null)}
         />
       ) : null}
     </div>
+  );
+}
+
+/**
+ * Thermal printer controls.
+ *
+ * Pairing has to happen inside a click — both Web Serial and Web Bluetooth
+ * refuse otherwise — so this is a button rather than something that reconnects
+ * on load. The bar hides itself entirely on browsers that support neither,
+ * because a permanently broken button on the busiest screen in the app is worse
+ * than no button.
+ */
+function PrinterBar({
+  printer,
+  autoPrint,
+  onConnected,
+  onAutoPrintChange,
+}: {
+  printer: ConnectedPrinter | null;
+  autoPrint: boolean;
+  onConnected: (printer: ConnectedPrinter | null) => void;
+  onAutoPrintChange: (enabled: boolean) => void;
+}) {
+  const { toast } = useToast();
+  const [support, setSupport] = React.useState({ serial: false, bluetooth: false });
+  const [connecting, setConnecting] = React.useState(false);
+  const [columns, setColumns] = React.useState<32 | 48>(32);
+
+  React.useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSupport(printerSupport());
+    setColumns(getPaperWidth());
+  }, []);
+
+  if (!support.serial && !support.bluetooth) return null;
+
+  async function connect(kind: 'serial' | 'bluetooth') {
+    setConnecting(true);
+    try {
+      const connected = kind === 'serial' ? await connectSerialPrinter() : await connectBluetoothPrinter();
+      onConnected(connected);
+      toast(`${connected.label} connected`);
+    } catch (error) {
+      // A cancelled chooser is the most common outcome and is not a failure.
+      const message = error instanceof Error ? error.message : 'Could not connect to that printer.';
+      if (!/cancel|no device|not selected/i.test(message)) toast(message, 'error');
+    } finally {
+      setConnecting(false);
+    }
+  }
+
+  return (
+    <Card className="flex flex-wrap items-center gap-x-4 gap-y-2 p-3">
+      <span className="flex items-center gap-2 text-sm font-semibold">
+        <Printer aria-hidden className="size-4 text-muted" />
+        {printer ? printer.label : 'No thermal printer'}
+      </span>
+
+      {printer ? (
+        <>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={autoPrint}
+              onChange={(event) => onAutoPrintChange(event.target.checked)}
+              className="size-4 accent-[var(--color-brand-500)]"
+            />
+            Print a slip when I accept an order
+          </label>
+
+          <label className="flex items-center gap-1.5 text-sm">
+            <span className="text-muted">Paper</span>
+            <select
+              value={String(columns)}
+              onChange={(event) => {
+                const next = Number(event.target.value) === 48 ? 48 : 32;
+                setColumns(next);
+                setPaperWidth(next);
+              }}
+              className="h-8 rounded-[var(--radius-field)] border border-border bg-surface px-2 text-sm"
+            >
+              <option value="32">58 mm</option>
+              <option value="48">80 mm</option>
+            </select>
+          </label>
+
+          <Button
+            size="sm"
+            variant="ghost"
+            className="ml-auto text-muted"
+            onClick={async () => {
+              await disconnectPrinter();
+              onConnected(null);
+            }}
+          >
+            Disconnect
+          </Button>
+        </>
+      ) : (
+        <div className="ml-auto flex flex-wrap gap-2">
+          {support.serial ? (
+            <Button size="sm" variant="outline" loading={connecting} onClick={() => connect('serial')}>
+              Connect USB printer
+            </Button>
+          ) : null}
+          {support.bluetooth ? (
+            <Button size="sm" variant="outline" loading={connecting} onClick={() => connect('bluetooth')}>
+              Connect Bluetooth printer
+            </Button>
+          ) : null}
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -453,6 +679,7 @@ const NEXT_ACTION: Partial<Record<OrderStatus, { to: OrderStatus; label: string;
 
 function OrderCard({
   order,
+  shopName,
   busy,
   onTransition,
   onReject,
@@ -461,6 +688,7 @@ function OrderCard({
   onConfirmPayment,
 }: {
   order: BoardOrder;
+  shopName: string;
   busy: boolean;
   onTransition: (to: OrderStatus) => void;
   onReject: () => void;
@@ -470,6 +698,14 @@ function OrderCard({
 }) {
   const action = NEXT_ACTION[order.status];
   const closed = ['PICKED_UP', 'REJECTED', 'CANCELLED', 'EXPIRED'].includes(order.status);
+
+  // Read on the client only: `window` does not exist during the server render,
+  // and an absolute URL is what makes the WhatsApp link tappable on a phone.
+  const [origin, setOrigin] = React.useState('');
+  React.useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setOrigin(window.location.origin);
+  }, []);
 
   // "Placed N minutes ago" is intentionally read from the wall clock at render
   // time: the board re-renders on every 6-second poll, so the figure stays live
@@ -578,9 +814,11 @@ function OrderCard({
                     phone: order.customerPhone,
                     customerName: order.customerName,
                     orderCode: order.code,
-                    shopName: 'Store',
+                    shopName,
                     status: order.status as 'ACCEPTED' | 'PREPARING' | 'READY',
                     totalMinor: order.totalMinor,
+                    // Only worth sending once the order is actually collectable.
+                    trackingUrl: order.status === 'READY' ? `${origin}/orders/${order.id}` : undefined,
                   })}
                   target="_blank"
                   rel="noreferrer"

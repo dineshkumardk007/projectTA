@@ -9,6 +9,7 @@ import { shopLocalDate } from '@/lib/domain/local-date';
 import { amountDueOnline } from '@/lib/services/upi';
 import { getOrderability } from '@/lib/domain/shop-availability';
 import { notify, notifyShopTeam } from '@/lib/services/notifications';
+import { resolveOrderSource } from '@/lib/services/attribution';
 import { formatMinor } from '@/lib/domain/money';
 import { formatClockTime } from '@/lib/domain/prep-time';
 
@@ -196,6 +197,8 @@ export type PlaceOrderInput = {
 };
 
 export async function placeOrder(input: PlaceOrderInput) {
+  const source = await resolveOrderSource(input.shopId);
+
   const shop = await db.shop.findUnique({
     where: { id: input.shopId },
     include: { operatingHours: true },
@@ -222,6 +225,24 @@ export async function placeOrder(input: PlaceOrderInput) {
 
   if (input.paymentMethod === 'CASH_ON_PICKUP' && !shop.acceptsCashOnPickup) {
     throw new DomainError('This shop requires payment before preparation.', 422, 'payment_method');
+  }
+
+  // Fraud guard. A customer with repeated uncollected cash orders may still
+  // order — they just have to pay first, so the shop is not left holding cooked
+  // food nobody comes for. The message says what to do next and does not accuse
+  // anyone of anything.
+  if (input.paymentMethod === 'CASH_ON_PICKUP') {
+    const profile = await db.customerProfile.findUnique({
+      where: { userId: input.customerId },
+      select: { isCashOnPickupBlocked: true },
+    });
+    if (profile?.isCashOnPickupBlocked) {
+      throw new DomainError(
+        'Please pay online for this order. Contact support if you think this is a mistake.',
+        403,
+        'cash_on_pickup_blocked',
+      );
+    }
   }
   if (input.paymentMethod === 'ONLINE' && !shop.acceptsOnlinePayment) {
     throw new DomainError('This shop does not accept online payment yet.', 422, 'payment_method');
@@ -256,6 +277,7 @@ export async function placeOrder(input: PlaceOrderInput) {
         customerId: input.customerId,
         shopId: shop.id,
         status: 'PLACED',
+        source,
         subtotalMinor: cart.subtotalMinor,
         totalMinor: cart.totalMinor,
         isCustomList,

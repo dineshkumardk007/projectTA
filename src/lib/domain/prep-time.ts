@@ -106,6 +106,20 @@ export function formatClockTime(date: Date): string {
   });
 }
 
+/**
+ * A bare hour of the day as "4PM" — for peak-hour axes and tables.
+ *
+ * Lives here, in a module with no `'use client'` and no `server-only`, because
+ * both the client charts and the server-rendered tables beside them need it.
+ * A copy inside a client component cannot be called from a server component at
+ * all, and two copies would eventually disagree about midnight.
+ */
+export function formatHourOfDay(hour: number): string {
+  const suffix = hour >= 12 ? 'PM' : 'AM';
+  const normalised = hour % 12 === 0 ? 12 : hour % 12;
+  return `${normalised}${suffix}`;
+}
+
 export type TravelSync = {
   /** How the customer's arrival lines up with the food being ready. */
   verdict: 'perfect' | 'wait-for-order' | 'order-waits' | 'unknown';

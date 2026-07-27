@@ -1,9 +1,12 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { ArrowRight } from 'lucide-react';
+import { ArrowRight, CircleAlert, Rocket } from 'lucide-react';
 import { requireMerchantContext, getShopAnalytics } from '@/lib/services/merchant';
 import { countActiveOrders } from '@/lib/services/orders';
-import { estimatePrepMinutes } from '@/lib/domain/prep-time';
+import { getBillingSummary } from '@/lib/services/subscription';
+import { findLiveBoost } from '@/lib/services/boosts';
+import { boostHoursRemaining } from '@/lib/domain/boost-plans';
+import { estimatePrepMinutes, formatHourOfDay as formatHour } from '@/lib/domain/prep-time';
 import { ShopStatusControl } from '@/components/merchant/shop-status-control';
 import { Card, SectionHeader } from '@/components/ui/primitives';
 import { Button } from '@/components/ui/button';
@@ -26,7 +29,7 @@ export default async function MerchantHomePage() {
   const startOfDay = new Date();
   startOfDay.setHours(0, 0, 0, 0);
 
-  const [activeOrders, analytics, todayOrders, todaySales, readyCount] = await Promise.all([
+  const [activeOrders, analytics, todayOrders, todaySales, readyCount, billing, liveBoost] = await Promise.all([
     countActiveOrders(shop.id),
     getShopAnalytics(shop.id),
     db.order.count({ where: { shopId: shop.id, placedAt: { gte: startOfDay } } }),
@@ -35,6 +38,8 @@ export default async function MerchantHomePage() {
       _sum: { totalMinor: true },
     }),
     db.order.count({ where: { shopId: shop.id, status: 'READY' } }),
+    getBillingSummary(shop.merchantId),
+    findLiveBoost(shop.id),
   ]);
 
   const estimate = estimatePrepMinutes({
@@ -52,6 +57,30 @@ export default async function MerchantHomePage() {
         </p>
         <h1 className="text-2xl font-extrabold">{shop.name}</h1>
       </header>
+
+      {/* Placed above the status control on purpose: if the shop is hidden from
+          customers, nothing else on this screen matters until it is fixed. */}
+      {!billing.isUnbilled && !billing.isActive ? (
+        <Card className="flex flex-wrap items-center gap-3 border-danger-500/40 bg-danger-50 p-4 dark:bg-danger-500/10">
+          <CircleAlert aria-hidden className="size-5 shrink-0 text-danger-600" />
+          <p className="flex-1 text-sm font-semibold text-danger-700 dark:text-danger-100">
+            Your subscription has ended, so your shop is hidden from customers.
+          </p>
+          <Button asChild size="sm">
+            <Link href="/merchant/billing">Renew</Link>
+          </Button>
+        </Card>
+      ) : billing.daysRemaining != null && billing.daysRemaining <= 5 ? (
+        <Card className="flex flex-wrap items-center gap-3 border-warning-500/40 bg-warning-50 p-4 dark:bg-warning-500/10">
+          <CircleAlert aria-hidden className="size-5 shrink-0 text-warning-600" />
+          <p className="flex-1 text-sm font-semibold text-warning-700 dark:text-warning-100">
+            {billing.daysRemaining} day{billing.daysRemaining === 1 ? '' : 's'} left on your plan.
+          </p>
+          <Button asChild size="sm" variant="outline">
+            <Link href="/merchant/billing">Renew</Link>
+          </Button>
+        </Card>
+      ) : null}
 
       <ShopStatusControl
         shopId={shop.id}
@@ -72,6 +101,29 @@ export default async function MerchantHomePage() {
           <ArrowRight aria-hidden className="size-4" />
         </Link>
       </Button>
+
+      {liveBoost ? (
+        <Card className="flex items-center gap-3 border-warning-500/40 p-4">
+          <Rocket aria-hidden className="size-5 shrink-0 text-warning-600" />
+          <p className="flex-1 text-sm font-semibold">
+            Featured for another {boostHoursRemaining(liveBoost.endsAt)} hour
+            {boostHoursRemaining(liveBoost.endsAt) === 1 ? '' : 's'}
+          </p>
+          <Link href="/merchant/boost" className="text-sm font-semibold text-brand-600">
+            Extend
+          </Link>
+        </Card>
+      ) : (
+        <Card className="flex flex-wrap items-center gap-3 p-4">
+          <Rocket aria-hidden className="size-5 shrink-0 text-muted" />
+          <p className="flex-1 text-sm">
+            Quiet afternoon? Be first in nearby customers&rsquo; search for ₹99 today.
+          </p>
+          <Button asChild size="sm" variant="outline">
+            <Link href="/merchant/boost">Boost my shop</Link>
+          </Button>
+        </Card>
+      )}
 
       <section>
         <SectionHeader title="Last 30 days" />
@@ -151,12 +203,6 @@ export default async function MerchantHomePage() {
       </section>
     </div>
   );
-}
-
-function formatHour(hour: number): string {
-  const suffix = hour >= 12 ? 'PM' : 'AM';
-  const h = hour % 12 === 0 ? 12 : hour % 12;
-  return `${h} ${suffix}`;
 }
 
 function Metric({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {

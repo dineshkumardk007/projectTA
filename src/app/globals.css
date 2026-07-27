@@ -91,8 +91,31 @@
   --font-sans: var(--font-app-sans), ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
 }
 
+/* Chart marks.
+   --------------------------------------------------------------------------
+   Separate from the semantic status colours because they answer a different
+   question: status says "this is bad", a chart mark says "this is series A".
+   Reusing `danger` for a data series would make a red bar look like an alarm.
+
+   These two are the only pair on the admin demand map, and they were *checked*,
+   not chosen: OKLab CVD separation ΔE 32.8 (protan) / 32.5 (tritan) against the
+   light surface and ≥30 against the dark one, both inside their mode's lightness
+   band and clearing 3:1 contrast. Anything added here needs the same check —
+   see `scripts/validate_palette.js` in the dataviz reference. */
+:root {
+  --chart-demand: #f97316;
+  --chart-cold: #2563eb;
+}
+
 /* Dark theme. Tokens only — no component knows which theme is active. */
 @media (prefers-color-scheme: dark) {
+  :root {
+    /* Re-stepped for the dark surface rather than reused: the light-mode pair
+       sits above the dark lightness band and would glare. */
+    --chart-demand: #ea580c;
+    --chart-cold: #3b82f6;
+  }
+
   @theme {
     --color-canvas: #0b1220;
     --color-surface: #111a2b;

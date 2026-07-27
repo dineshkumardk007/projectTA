@@ -46,6 +46,15 @@ model User {
   // Bumped to invalidate every issued session token for this user.
   tokenVersion Int @default(0)
 
+  /// Engagement counters, written on every successful sign-in.
+  ///
+  /// Kept on `User` rather than derived from `UserSessionLog` because the two
+  /// answer different questions: these are the cheap "how often does this
+  /// account come back" numbers every admin list needs, while the session log is
+  /// the detailed record you only open for one person at a time.
+  lastLoginAt DateTime?
+  loginCount  Int       @default(0)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -59,8 +68,33 @@ model User {
   favoriteShops     FavoriteShop[]
   passwordResets    PasswordResetToken[]
   verifiedPayments  Payment[]            @relation("PaymentVerifier")
+  sessionLogs       UserSessionLog[]
 
   @@index([role])
+  @@index([lastLoginAt])
+}
+
+/// One row per sign-in, closed on sign-out.
+///
+/// `endedAt`/`durationSeconds` stay null for sessions that were never explicitly
+/// ended — most of them, since people close a tab rather than sign out. Session
+/// *time* is therefore reported only over closed rows and labelled as such;
+/// inventing a duration for an abandoned session would quietly inflate every
+/// engagement number that reads this table.
+model UserSessionLog {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  startedAt       DateTime  @default(now())
+  endedAt         DateTime?
+  durationSeconds Int?
+
+  /// "mobile" | "desktop" | "pwa" — derived from the user agent at sign-in.
+  deviceType String @default("desktop")
+
+  @@index([userId, startedAt])
+  @@index([startedAt])
 }
 
 /// Reliability counters live here so we can decide who may pay cash-on-pickup
@@ -78,6 +112,17 @@ model CustomerProfile {
   ordersCompleted Int @default(0)
   ordersCancelled Int @default(0)
   ordersAbandoned Int @default(0)
+
+  /// Orders paid for at the counter that were never collected. Distinct from
+  /// `ordersAbandoned` (which counts any uncollected order) because only these
+  /// cost a shop real food, and only these justify the block below.
+  abandonedOrderCount Int @default(0)
+
+  /// Admin-set. Blocks cash-on-pickup for this customer platform-wide: they may
+  /// still order, but must pay up front. Deliberately a manual switch rather
+  /// than an automatic threshold — a wrong automatic ban is invisible to the
+  /// person it hits and impossible for a shop to appeal.
+  isCashOnPickupBlocked Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -104,9 +149,102 @@ model Merchant {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  shops Shop[]
+  shops        Shop[]
+  subscription MerchantSubscription?
 
   @@index([verificationStatus])
+}
+
+// ---------------------------------------------------------------------------
+// Merchant subscriptions
+// ---------------------------------------------------------------------------
+
+enum SubscriptionTier {
+  STARTER
+  PRO
+  ENTERPRISE
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELLED
+  EXPIRED
+}
+
+/// What a merchant pays to keep their shops listed.
+///
+/// Two phases share this one model. Phase 1 is manual: an admin records a UPI
+/// transfer and pushes `currentPeriodEnd` forward by hand (`provider = "manual"`,
+/// `subscriptionRef` = the receipt/UTR). Phase 2 hands the same fields to
+/// Razorpay auto-debit (`provider = "razorpay"`, `subscriptionRef` = their
+/// subscription id). Nothing downstream — access checks, MRR, the merchant's own
+/// billing screen — knows or cares which one wrote the row.
+///
+/// **A merchant with no row here is not billed and is never deactivated.** Every
+/// shop that existed before subscriptions shipped keeps working; billing starts
+/// the day an admin creates the row. Enforcement that silently switched off the
+/// entire platform on deploy would be a worse bug than any revenue it collected.
+model MerchantSubscription {
+  id         String   @id @default(cuid())
+  merchantId String   @unique
+  merchant   Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  tier   SubscriptionTier   @default(STARTER)
+  status SubscriptionStatus @default(TRIALING)
+
+  /// "manual" | "razorpay" | "stripe"
+  provider String @default("manual")
+  /// Provider subscription id, or the manual receipt / UPI reference number.
+  subscriptionRef String?
+
+  trialEndsAt        DateTime?
+  currentPeriodStart DateTime  @default(now())
+  /// The only date that decides access. Everything else is bookkeeping.
+  currentPeriodEnd   DateTime
+  cancelledAt        DateTime?
+
+  /// Free-form admin note, e.g. "Paid ₹399 via UPI, ref 123456789012".
+  note String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  payments SubscriptionPayment[]
+
+  @@index([status, currentPeriodEnd])
+}
+
+/// An audit line per collection, manual or automatic.
+///
+/// Separate from `Payment` on purpose: that table is customer-to-shop money for
+/// a specific order, this is merchant-to-platform money for a billing period.
+/// Merging them would make both harder to reconcile.
+model SubscriptionPayment {
+  id             String               @id @default(cuid())
+  subscriptionId String
+  subscription   MerchantSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  amountMinor Int
+  tier        SubscriptionTier
+  /// "manual" | "razorpay" | "stripe"
+  provider    String
+  /// Provider payment id, or the UPI reference an admin typed in. Unique so a
+  /// replayed webhook cannot record the same rupee twice.
+  providerRef String? @unique
+  note        String?
+
+  /// Period this payment bought, copied at the time so a later correction to the
+  /// subscription cannot rewrite the receipt.
+  periodStart DateTime
+  periodEnd   DateTime
+
+  recordedByUserId String?
+  createdAt        DateTime @default(now())
+
+  @@index([subscriptionId, createdAt])
+  @@index([createdAt])
 }
 
 enum ShopStaffRole {
@@ -216,6 +354,11 @@ model Shop {
   isVerified Boolean @default(false)
   isActive   Boolean @default(true)
 
+  /// True when `isActive` was switched off by the subscription sweep rather than
+  /// by a person. Renewal only un-hides shops carrying this flag, so restoring a
+  /// lapsed subscription can never quietly undo an admin's manual suspension.
+  deactivatedBySubscription Boolean @default(false)
+
   /// Stable token behind the printed poster QR code — scanning opens this shop.
   publicQrToken String @unique @default(cuid())
 
@@ -240,11 +383,53 @@ model Shop {
   orders         Order[]
   operatingHours ShopOperatingHours[]
   favorites      FavoriteShop[]
+  boosts         ShopFeaturedBoost[]
 
   @@index([categoryId])
   @@index([city])
   @@index([status])
   @@index([city, isActive, status])
+}
+
+enum BoostSlotType {
+  HOME_HERO
+  CATEGORY_TOP
+  SEARCH_PINNED
+}
+
+/// A day-rate promotion slot — the micro-ad product.
+///
+/// Priced per day rather than per click or per order: a tea shop will pay ₹99 to
+/// be first today, but will not sign up to a variable bill it cannot predict.
+///
+/// A boost only ever changes *ordering*. It cannot make a closed, unverified,
+/// hidden or unsubscribed shop appear — paying does not buy a listing, only a
+/// better position among shops a customer could already order from.
+model ShopFeaturedBoost {
+  id     String @id @default(cuid())
+  shopId String
+  shop   Shop   @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  slotType BoostSlotType @default(SEARCH_PINNED)
+
+  startsAt DateTime @default(now())
+  endsAt   DateTime
+  /// 1, 3 or 7. Stored alongside the dates so a receipt still reads correctly
+  /// after an admin nudges `endsAt` to compensate for downtime.
+  durationDays Int @default(1)
+
+  amountPaidMinor Int
+  /// UPI reference, gateway payment id, or an admin's manual note reference.
+  paymentRef      String?
+
+  /// Admin/merchant kill switch. Kept separate from `endsAt` so cancelling a
+  /// boost does not destroy the record of what was sold.
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+
+  @@index([shopId, endsAt])
+  @@index([isActive, startsAt, endsAt])
 }
 
 model ShopOperatingHours {
@@ -402,6 +587,20 @@ enum PickupVerificationMethod {
   MANUAL
 }
 
+/// How the customer arrived at the shop they ordered from.
+///
+/// `POSTER_QR` is the one worth paying for: it is the only proof that the
+/// printed counter poster — the platform's main offline acquisition channel —
+/// actually converts, rather than being decoration next to a till.
+enum OrderSource {
+  /// Found in the app: browse, search, category, favourites.
+  APP
+  /// Scanned the shop's printed counter poster.
+  POSTER_QR
+  /// Followed a shared link to the shop.
+  DIRECT_LINK
+}
+
 model Order {
   id   String @id @default(cuid())
   /// Short, shop-scoped, human-readable code shown at the counter, e.g. "A102".
@@ -420,6 +619,9 @@ model Order {
   shop       Shop   @relation(fields: [shopId], references: [id])
 
   status OrderStatus @default(PLACED)
+
+  /// Attribution, captured at placement. See `OrderSource`.
+  source OrderSource @default(APP)
 
   subtotalMinor Int
   totalMinor    Int
@@ -493,6 +695,8 @@ model Order {
   @@index([shopId, status])
   @@index([shopId, status, placedAt])
   @@index([status])
+  @@index([placedAt])
+  @@index([shopId, source])
 }
 
 model OrderItem {
@@ -666,6 +870,40 @@ model FavoriteShop {
   createdAt DateTime @default(now())
 
   @@unique([userId, shopId])
+}
+
+// ---------------------------------------------------------------------------
+// Marketing
+// ---------------------------------------------------------------------------
+
+/// A dispatched push campaign.
+///
+/// Written *after* the send, as a record of what went out to whom — not as a
+/// queue. Campaigns are fired synchronously by an admin action, so there is no
+/// scheduled state to model and nothing that can silently send twice.
+model PushCampaign {
+  id    String @id @default(cuid())
+  title String
+  body  String
+  href  String?
+
+  /// Optional geographic target: everyone whose saved default location is within
+  /// `radiusKm` of this point.
+  centerLatitude  Float?
+  centerLongitude Float?
+  radiusKm        Float?
+  /// Optional city target, matched against `CustomerProfile.defaultCity`.
+  city            String?
+
+  /// How many users matched, and how many push subscriptions actually accepted
+  /// delivery. The gap between them is the real reach — worth seeing.
+  targetedUsers  Int @default(0)
+  deliveredPushes Int @default(0)
+
+  sentByUserId String?
+  sentAt       DateTime @default(now())
+
+  @@index([sentAt])
 }
 
 // ---------------------------------------------------------------------------

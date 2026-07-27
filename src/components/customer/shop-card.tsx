@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { Heart, Sparkles } from 'lucide-react';
+import { Heart, Sparkles, Star } from 'lucide-react';
 import { formatMinor } from '@/lib/domain/money';
 import { Card } from '@/components/ui/primitives';
 import { ImageOrPlaceholder } from '@/components/ui/generated-image';
@@ -41,8 +41,11 @@ export function ShopCard({ shop, className }: { shop: ShopSummary; className?: s
             rounded="none"
             className={cn('h-32 w-full sm:h-36', closed && 'opacity-60 grayscale')}
           />
-          <div className="absolute left-3 top-3">
+          <div className="absolute left-3 top-3 flex flex-wrap items-center gap-1.5">
             <ShopStatusBadge orderability={shop.orderability} className="shadow-sm backdrop-blur" />
+            {/* Labelled, not disguised. A customer is entitled to know why this
+                shop is at the top of their list. */}
+            {shop.featuredSlot ? <FeaturedBadge /> : null}
           </div>
           {shop.isFavorite ? (
             <span className="absolute right-3 top-3 flex size-8 items-center justify-center rounded-full bg-surface/90 text-brand-600 shadow-sm">
@@ -108,6 +111,27 @@ export function ShopCard({ shop, className }: { shop: ShopSummary; className?: s
   );
 }
 
+/**
+ * "Featured / Special today" — the badge a boosted shop pays for.
+ *
+ * Shown wherever paid placement changes the order, because placement the
+ * customer cannot see is placement they cannot judge.
+ */
+export function FeaturedBadge({ className }: { className?: string }) {
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1 rounded-[var(--radius-pill)] bg-warning-500 px-2.5 py-1',
+        'text-xs font-bold text-white shadow-sm backdrop-blur',
+        className,
+      )}
+    >
+      <Star aria-hidden className="size-3.5 fill-current" />
+      Featured today
+    </span>
+  );
+}
+
 /** Compact horizontal variant used in "Ready fast" rails. */
 export function ShopCardCompact({ shop }: { shop: ShopSummary }) {
   const { coords } = useLocation();
@@ -125,7 +149,10 @@ export function ShopCardCompact({ shop }: { shop: ShopSummary }) {
           className="h-24 w-full"
         />
         <div className="p-3">
-          <h3 className="truncate text-sm font-bold">{shop.name}</h3>
+          <div className="flex items-center gap-1.5">
+            <h3 className="truncate text-sm font-bold">{shop.name}</h3>
+            {shop.featuredSlot ? <Star aria-hidden className="size-3.5 shrink-0 fill-warning-500 text-warning-500" /> : null}
+          </div>
           <div className="mt-2 flex items-center gap-2">
             <PreparationTimeBadge rangeLow={shop.prepRangeLow} rangeHigh={shop.prepRangeHigh} />
             <DistanceBadge km={distanceKm} />

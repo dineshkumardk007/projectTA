@@ -4,6 +4,7 @@ import { hashPassword } from '@/lib/auth/password';
 import { setSessionCookie, signSession } from '@/lib/auth/session';
 import { DomainError, clientKey, ok, rateLimit, route } from '@/lib/api';
 import { registerSchema } from '@/lib/validation';
+import { recordSignIn } from '@/lib/services/auth';
 
 /**
  * Customer and merchant self-registration.
@@ -62,6 +63,9 @@ export const POST = route(async (request: Request) => {
   await setSessionCookie(
     await signSession({ sub: user.id, role: user.role, name: user.name, ver: user.tokenVersion }),
   );
+
+  // Registration signs the user straight in, so it counts as their first visit.
+  await recordSignIn(user.id, request);
 
   return ok({ id: user.id, name: user.name, role: user.role }, 201);
 });

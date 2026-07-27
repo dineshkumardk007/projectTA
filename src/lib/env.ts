@@ -30,6 +30,17 @@ const schema = z.object({
   VAPID_PRIVATE_KEY: z.string().optional().default(''),
   VAPID_SUBJECT: z.string().optional().default('mailto:support@takeaway.example'),
 
+  /**
+   * Where merchants send their subscription and boost payments in Phase 1.
+   *
+   * Optional: with no VPA configured the merchant's billing screen shows the
+   * support contact instead of a QR code. That is the right failure — a QR that
+   * pays nobody is worse than no QR.
+   */
+  PLATFORM_UPI_ID: z.string().optional().default(''),
+  PLATFORM_UPI_NAME: z.string().optional().default('Takeaway'),
+  PLATFORM_SUPPORT_PHONE: z.string().optional().default(''),
+
   EMAIL_PROVIDER: z.enum(['console', 'resend']).default('console'),
   RESEND_API_KEY: z.string().optional().default(''),
   EMAIL_FROM: z.string().optional().default('Takeaway <no-reply@takeaway.example>'),
@@ -61,4 +72,6 @@ export const providerReadiness = {
   push: env.PUSH_PROVIDER === 'webpush' && env.VAPID_PRIVATE_KEY.length > 0,
   storage: env.STORAGE_PROVIDER === 's3' && env.S3_BUCKET.length > 0,
   email: env.EMAIL_PROVIDER === 'resend' && env.RESEND_API_KEY.length > 0,
+  /** Can merchants be shown a "pay us" QR code yet? */
+  platformBilling: env.PLATFORM_UPI_ID.length > 0,
 };

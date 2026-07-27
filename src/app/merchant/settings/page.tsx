@@ -16,7 +16,7 @@ export default async function ShopSettingsPage() {
 
   const [hours, qr] = await Promise.all([
     db.shopOperatingHours.findMany({ where: { shopId: shop.id }, orderBy: { dayOfWeek: 'asc' } }),
-    renderShopQr(shop.slug),
+    renderShopQr(shop.publicQrToken),
   ]);
 
   return (

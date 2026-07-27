@@ -14,7 +14,10 @@ export default async function MerchantOrdersPage() {
         <h1 className="text-2xl font-extrabold">Orders</h1>
         <p className="text-sm text-muted">{shop.name} · updates automatically</p>
       </header>
-      <OrderBoard shopId={shop.id} />
+      {/* The name is passed down rather than looked up in the client: it goes on
+          the printed kitchen slip and into the WhatsApp message, and "Store" on
+          a customer's phone is worse than no message. */}
+      <OrderBoard shopId={shop.id} shopName={shop.name} />
     </div>
   );
 }

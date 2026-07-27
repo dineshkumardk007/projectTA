@@ -161,6 +161,37 @@ export function BaselineWaitAction({
   );
 }
 
+/**
+ * The fraud guard toggle.
+ *
+ * A blocked customer is not banned — they can still order, they just pay first.
+ * The wording says exactly that, because an admin reading "Block" at speed will
+ * otherwise assume it locks the account.
+ */
+export function CashOnPickupAction({ userId, isBlocked }: { userId: string; isBlocked: boolean }) {
+  const { run, pending } = useAction();
+
+  return (
+    <Button
+      size="sm"
+      variant={isBlocked ? 'outline' : 'ghost'}
+      className={isBlocked ? undefined : 'text-danger-600'}
+      loading={pending}
+      onClick={() =>
+        run(
+          `/api/admin/users/${userId}`,
+          { isCashOnPickupBlocked: !isBlocked },
+          isBlocked
+            ? 'Cash on pickup allowed again.'
+            : 'Cash on pickup blocked — this customer must now pay before collection.',
+        )
+      }
+    >
+      {isBlocked ? 'Allow cash on pickup' : 'Block cash on pickup'}
+    </Button>
+  );
+}
+
 export function UserActiveAction({ userId, isActive }: { userId: string; isActive: boolean }) {
   const { run, pending } = useAction();
 

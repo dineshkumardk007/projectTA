@@ -2,14 +2,21 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ClipboardList, LayoutGrid, QrCode, Settings, UtensilsCrossed } from 'lucide-react';
+import { ClipboardList, CreditCard, LayoutGrid, QrCode, Rocket, Settings, UtensilsCrossed } from 'lucide-react';
 import { cn } from '@/lib/cn';
 
+/**
+ * Billing and Boost are deliberately last on the phone bar and grouped at the
+ * bottom on desktop: during service the only things that matter are orders and
+ * the menu, and a mis-tap should never land on a payment screen.
+ */
 const NAV = [
   { href: '/merchant', label: 'Today', icon: LayoutGrid, exact: true },
   { href: '/merchant/orders', label: 'Orders', icon: ClipboardList, exact: false },
   { href: '/merchant/menu', label: 'Menu', icon: UtensilsCrossed, exact: false },
   { href: '/merchant/scan', label: 'Scan', icon: QrCode, exact: false },
+  { href: '/merchant/boost', label: 'Boost', icon: Rocket, exact: false },
+  { href: '/merchant/billing', label: 'Billing', icon: CreditCard, exact: false },
   { href: '/merchant/settings', label: 'Shop', icon: Settings, exact: false },
 ];
 
@@ -29,12 +36,14 @@ export function MerchantNav() {
       )}
     >
       <p className="hidden px-5 pb-6 text-lg font-extrabold lg:block">Takeaway</p>
-      <ul className="mx-auto flex max-w-3xl lg:mx-0 lg:max-w-none lg:flex-col lg:gap-1 lg:px-3">
+      <ul className="mx-auto flex max-w-3xl overflow-x-auto lg:mx-0 lg:max-w-none lg:flex-col lg:gap-1 lg:overflow-visible lg:px-3">
         {NAV.map((item) => {
           const active = item.exact ? pathname === item.href : pathname.startsWith(item.href);
           const Icon = item.icon;
           return (
-            <li key={item.href} className="flex-1 lg:flex-none">
+            // `min-w` keeps the tap target usable once there are seven items;
+            // the bar scrolls rather than squeezing them into thumbnails.
+            <li key={item.href} className="min-w-[68px] flex-1 lg:min-w-0 lg:flex-none">
               <Link
                 href={item.href}
                 aria-current={active ? 'page' : undefined}
