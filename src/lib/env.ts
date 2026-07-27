@@ -1,0 +1,64 @@
+import 'server-only';
+import { z } from 'zod';
+
+/**
+ * Validated server environment.
+ *
+ * Parsed once at module load so a misconfigured deployment fails immediately
+ * and loudly, rather than at 8am when the first order comes in.
+ */
+const schema = z.object({
+  DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
+
+  AUTH_SECRET: z
+    .string()
+    .min(32, 'AUTH_SECRET must be at least 32 characters — generate one with `openssl rand -base64 48`'),
+  AUTH_SESSION_DAYS: z.coerce.number().int().positive().default(30),
+
+  NEXT_PUBLIC_APP_URL: z.string().url().default('http://localhost:3000'),
+
+  MAPS_PROVIDER: z.enum(['haversine', 'google']).default('haversine'),
+  MAPS_API_KEY: z.string().optional().default(''),
+
+  PAYMENTS_PROVIDER: z.enum(['mock', 'razorpay']).default('mock'),
+  RAZORPAY_KEY_ID: z.string().optional().default(''),
+  RAZORPAY_KEY_SECRET: z.string().optional().default(''),
+  RAZORPAY_WEBHOOK_SECRET: z.string().optional().default(''),
+
+  PUSH_PROVIDER: z.enum(['mock', 'webpush']).default('mock'),
+  NEXT_PUBLIC_VAPID_PUBLIC_KEY: z.string().optional().default(''),
+  VAPID_PRIVATE_KEY: z.string().optional().default(''),
+  VAPID_SUBJECT: z.string().optional().default('mailto:support@takeaway.example'),
+
+  EMAIL_PROVIDER: z.enum(['console', 'resend']).default('console'),
+  RESEND_API_KEY: z.string().optional().default(''),
+  EMAIL_FROM: z.string().optional().default('Takeaway <no-reply@takeaway.example>'),
+
+  STORAGE_PROVIDER: z.enum(['local', 's3']).default('local'),
+  S3_ENDPOINT: z.string().optional().default(''),
+  S3_REGION: z.string().optional().default(''),
+  S3_BUCKET: z.string().optional().default(''),
+  S3_ACCESS_KEY_ID: z.string().optional().default(''),
+  S3_SECRET_ACCESS_KEY: z.string().optional().default(''),
+  S3_PUBLIC_BASE_URL: z.string().optional().default(''),
+
+  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+});
+
+const parsed = schema.safeParse(process.env);
+
+if (!parsed.success) {
+  const issues = parsed.error.issues.map((i) => `  • ${i.path.join('.')}: ${i.message}`).join('\n');
+  throw new Error(`Invalid environment configuration:\n${issues}\n\nSee .env.example.`);
+}
+
+export const env = parsed.data;
+
+/** Real credentials missing → providers fall back to their mock implementation. */
+export const providerReadiness = {
+  maps: env.MAPS_PROVIDER === 'google' && env.MAPS_API_KEY.length > 0,
+  payments: env.PAYMENTS_PROVIDER === 'razorpay' && env.RAZORPAY_KEY_ID.length > 0,
+  push: env.PUSH_PROVIDER === 'webpush' && env.VAPID_PRIVATE_KEY.length > 0,
+  storage: env.STORAGE_PROVIDER === 's3' && env.S3_BUCKET.length > 0,
+  email: env.EMAIL_PROVIDER === 'resend' && env.RESEND_API_KEY.length > 0,
+};

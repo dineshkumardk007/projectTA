@@ -1,0 +1,682 @@
+// Takeaway — pre-order, preparation management and quick pickup platform.
+//
+// Design notes that are easy to lose later:
+//
+// * All money is stored in **minor units** (paise). `8000` means ₹80.00. Never
+//   store money as a float.
+// * Customisations and add-ons share one model pair
+//   (ProductOptionGroup / ProductOption). A "Spice level" group is
+//   required/min 1/max 1; an "Add-ons" group is optional/min 0/max N. This keeps
+//   the ordering code path identical for both.
+// * `Product.unitLabel` and `unitStep` exist so the same model can describe a
+//   tea ("1 cup") and a fruit-shop item ("per 500 g") without a second schema.
+// * The cart lives on the client (localStorage). Prices, availability and totals
+//   are always recomputed server-side when an order is placed, so a tampered
+//   cart cannot change what a customer is charged.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Identity & roles
+// ---------------------------------------------------------------------------
+
+enum UserRole {
+  CUSTOMER
+  MERCHANT
+  STAFF
+  ADMIN
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  phone        String?  @unique
+  passwordHash String
+  role         UserRole @default(CUSTOMER)
+  isActive     Boolean  @default(true)
+
+  // Bumped to invalidate every issued session token for this user.
+  tokenVersion Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  customerProfile   CustomerProfile?
+  merchant          Merchant?
+  staffMemberships  ShopStaff[]
+  orders            Order[]            @relation("CustomerOrders")
+  statusEvents      OrderStatusEvent[]
+  notifications     Notification[]
+  pushSubscriptions PushSubscription[]
+  favoriteShops     FavoriteShop[]
+  passwordResets    PasswordResetToken[]
+  verifiedPayments  Payment[]            @relation("PaymentVerifier")
+
+  @@index([role])
+}
+
+/// Reliability counters live here so we can decide who may pay cash-on-pickup
+/// without ever exposing a "score" publicly.
+model CustomerProfile {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  defaultLatitude  Float?
+  defaultLongitude Float?
+  defaultCity      String?
+
+  ordersPlaced    Int @default(0)
+  ordersCompleted Int @default(0)
+  ordersCancelled Int @default(0)
+  ordersAbandoned Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum MerchantVerificationStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+  SUSPENDED
+}
+
+model Merchant {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  businessName       String
+  contactPhone       String
+  verificationStatus MerchantVerificationStatus @default(PENDING)
+  verificationNote   String?
+  verifiedAt         DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  shops Shop[]
+
+  @@index([verificationStatus])
+}
+
+enum ShopStaffRole {
+  MANAGER
+  COUNTER
+}
+
+model ShopStaff {
+  id     String        @id @default(cuid())
+  shopId String
+  shop   Shop          @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  userId String
+  user   User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role   ShopStaffRole @default(COUNTER)
+
+  createdAt DateTime @default(now())
+
+  @@unique([shopId, userId])
+}
+
+// ---------------------------------------------------------------------------
+// Shops
+// ---------------------------------------------------------------------------
+
+/// Platform-wide discovery taxonomy (Tea, Breakfast, Juice, …). Kept separate
+/// from a shop's own menu sections so browse/filter stays consistent.
+model Category {
+  id        String  @id @default(cuid())
+  slug      String  @unique
+  name      String
+  emoji     String
+  sortOrder Int     @default(0)
+  isActive  Boolean @default(true)
+
+  shops Shop[]
+}
+
+/// Live operating state. Drives both the customer-visible badge and the
+/// preparation-time multiplier, so a merchant never accidentally promises a
+/// 10-minute pickup during a rush.
+enum ShopStatus {
+  OPEN
+  BUSY
+  VERY_BUSY
+  PAUSED
+  CLOSED
+}
+
+model Shop {
+  id         String   @id @default(cuid())
+  slug       String   @unique
+  merchantId String
+  merchant   Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  name        String
+  tagline     String?
+  description String?
+  categoryId  String
+  category    Category @relation(fields: [categoryId], references: [id])
+  /// Free-form descriptors shown under the shop name ("Tea • Coffee • Snacks").
+  tags        String[] @default([])
+
+  coverImageUrl String?
+  logoImageUrl  String?
+
+  addressLine String
+  city        String
+  pincode     String?
+  latitude    Float
+  longitude   Float
+  phone       String
+
+  status       ShopStatus @default(CLOSED)
+  /// Set when the merchant flips to BUSY/VERY_BUSY/PAUSED so the app can offer
+  /// to restore OPEN automatically later.
+  statusNote   String?
+  statusSetAt  DateTime?
+
+  /// Minutes of preparation a typical order takes when the shop is not busy.
+  basePrepMinutes Int @default(10)
+  /// Beyond this many simultaneously-active orders the shop stops accepting new
+  /// ones. 0 disables the cap.
+  maxActiveOrders Int @default(0)
+
+  acceptsCashOnPickup Boolean @default(true)
+  acceptsOnlinePayment Boolean @default(true)
+
+  /// Direct UPI collection.
+  ///
+  /// `upiId` is the shop's own VPA — customers pay it directly, so the platform
+  /// never holds funds and takes no commission. Nothing else is needed to switch
+  /// payments on: no merchant account, no gateway onboarding.
+  upiId        String?
+  /// Name shown in the payer's UPI app. Falls back to the shop name.
+  upiPayeeName String?
+  /// Percentage collected up front when a customer chooses to part-pay. The
+  /// balance is taken in cash at the counter.
+  upiDepositPercent Int @default(30)
+  /// Whether customers may pay only a deposit rather than the whole amount.
+  allowUpiDeposit   Boolean @default(true)
+  allowCustomList Boolean @default(true)
+
+  /// What a customer would typically have waited *in the queue* had they walked
+  /// in during a busy period. Used for the "waiting time saved" metric.
+  baselineWaitMinutes Int @default(15)
+
+  isVerified Boolean @default(false)
+  isActive   Boolean @default(true)
+
+  /// Stable token behind the printed poster QR code — scanning opens this shop.
+  publicQrToken String @unique @default(cuid())
+
+  /// IANA zone used to decide when "today" rolls over for this shop's order
+  /// codes. Must be the shop's own timezone, not the server's: a UTC rollover
+  /// would reset a Tuticorin shop's codes at 5:30 AM, in the middle of the
+  /// breakfast rush.
+  timeZone String @default("Asia/Kolkata")
+
+  /// Human-friendly order codes are `${orderCodePrefix}${sequence}` and the
+  /// sequence resets each day, in `timeZone`.
+  orderCodePrefix String @default("A")
+  dailySequence   Int    @default(100)
+  dailySequenceOn String @default("")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  staff          ShopStaff[]
+  menuCategories MenuCategory[]
+  products       Product[]
+  orders         Order[]
+  operatingHours ShopOperatingHours[]
+  favorites      FavoriteShop[]
+
+  @@index([categoryId])
+  @@index([city])
+  @@index([status])
+  @@index([city, isActive, status])
+}
+
+model ShopOperatingHours {
+  id     String @id @default(cuid())
+  shopId String
+  shop   Shop   @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  /// 0 = Sunday … 6 = Saturday
+  dayOfWeek Int
+  /// Minutes past midnight, local shop time. 8:30 AM = 510.
+  opensAt   Int
+  closesAt  Int
+  isClosed  Boolean @default(false)
+
+  @@unique([shopId, dayOfWeek])
+}
+
+// ---------------------------------------------------------------------------
+// Menu
+// ---------------------------------------------------------------------------
+
+/// A shop's own menu section ("Popular", "Tea", "Snacks").
+model MenuCategory {
+  id     String @id @default(cuid())
+  shopId String
+  shop   Shop   @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  name      String
+  sortOrder Int    @default(0)
+
+  products Product[]
+
+  @@unique([shopId, name])
+}
+
+enum ProductAvailability {
+  AVAILABLE
+  OUT_OF_STOCK
+  TEMPORARILY_UNAVAILABLE
+}
+
+model Product {
+  id             String        @id @default(cuid())
+  shopId         String
+  shop           Shop          @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  menuCategoryId String?
+  menuCategory   MenuCategory? @relation(fields: [menuCategoryId], references: [id], onDelete: SetNull)
+
+  name        String
+  description String?
+  imageUrl    String?
+
+  priceMinor  Int
+  prepMinutes Int @default(5)
+
+  /// "1 cup", "per plate", "per 500 g" — lets grocery/fruit shops reuse the
+  /// same model without a schema change.
+  unitLabel String @default("")
+
+  availability ProductAvailability @default(AVAILABLE)
+  /// Long-running favourite. Pins the item into the shop's "Popular" section.
+  isPopular    Boolean             @default(false)
+  sortOrder    Int                 @default(0)
+
+  /// Today's special.
+  ///
+  /// Stored as the shop-local date the item is special *for* rather than a
+  /// boolean, so it expires by itself when the shop's day rolls over. A merchant
+  /// who forgets to switch it off does not end up advertising Monday's special
+  /// on Thursday, and no cron job is needed to clean up.
+  specialOn   String  @default("")
+  /// Optional one-liner shown with the special ("Fresh batch at 4 PM").
+  specialNote String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  optionGroups ProductOptionGroup[]
+  orderItems   OrderItem[]
+
+  @@index([shopId, availability])
+}
+
+/// One model covers both customisation ("Spice level", required, pick 1) and
+/// add-ons ("Extras", optional, pick up to 3).
+model ProductOptionGroup {
+  id        String  @id @default(cuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  name      String
+  minSelect Int     @default(0)
+  maxSelect Int     @default(1)
+  sortOrder Int     @default(0)
+
+  options ProductOption[]
+}
+
+model ProductOption {
+  id      String             @id @default(cuid())
+  groupId String
+  group   ProductOptionGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  name            String
+  priceDeltaMinor Int     @default(0)
+  prepDeltaMinutes Int    @default(0)
+  isAvailable     Boolean @default(true)
+  sortOrder       Int     @default(0)
+}
+
+// ---------------------------------------------------------------------------
+// Orders
+// ---------------------------------------------------------------------------
+
+enum OrderStatus {
+  PLACED
+  ACCEPTED
+  PREPARING
+  READY
+  PICKED_UP
+  REJECTED
+  CANCELLED
+  EXPIRED
+}
+
+enum PaymentMethod {
+  CASH_ON_PICKUP
+  /// Hosted gateway (Razorpay / mock). Server-verified.
+  ONLINE
+  /// Whole amount paid straight to the shop's UPI ID via a deep link.
+  UPI_FULL
+  /// Part now via UPI, the balance in cash at the counter.
+  UPI_DEPOSIT
+}
+
+enum PaymentStatus {
+  NOT_REQUIRED
+  PENDING
+  /// UPI only: the customer says they have paid and has given a reference, but
+  /// no one has checked the shop's account yet. Deliberately distinct from PAID
+  /// — a deep link produces no callback, so the claim is unverified until a
+  /// human confirms it.
+  AWAITING_VERIFICATION
+  /// A deposit has been confirmed; the balance is still due at the counter.
+  PARTIALLY_PAID
+  PAID
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum PickupVerificationMethod {
+  QR
+  ORDER_CODE
+  MANUAL
+}
+
+model Order {
+  id   String @id @default(cuid())
+  /// Short, shop-scoped, human-readable code shown at the counter, e.g. "A102".
+  code String
+  /// The shop's *local* calendar date this code belongs to (YYYY-MM-DD).
+  ///
+  /// Codes reset every day, so they are only unique within a day — hence
+  /// `@@unique([shopId, codeDate, code])` rather than `[shopId, code]`. Without
+  /// this column the daily reset collides with yesterday's codes and every order
+  /// at the shop fails until the counter climbs past yesterday's highest.
+  codeDate String @default("")
+
+  customerId String
+  customer   User   @relation("CustomerOrders", fields: [customerId], references: [id])
+  shopId     String
+  shop       Shop   @relation(fields: [shopId], references: [id])
+
+  status OrderStatus @default(PLACED)
+
+  subtotalMinor Int
+  totalMinor    Int
+
+  paymentMethod PaymentMethod
+  paymentStatus PaymentStatus @default(NOT_REQUIRED)
+
+  /// How much the shop is expected to collect online before preparing. Equals
+  /// `totalMinor` for a full UPI payment and the deposit for a part payment.
+  amountDueOnlineMinor Int @default(0)
+  /// How much has actually been *confirmed* received — never incremented by the
+  /// customer's word alone, only when the shop verifies it or cash is collected.
+  amountPaidMinor      Int @default(0)
+
+  /// What the customer was promised at checkout, and what actually happened.
+  /// Comparing the two is how merchant reliability is measured.
+  promisedPrepMinutes Int
+  estimatedReadyAt    DateTime
+  actualPrepMinutes   Int?
+
+  /// Travel-time synchronisation: how far away the customer was when ordering.
+  customerEtaMinutes Int?
+  customerLatitude   Float?
+  customerLongitude  Float?
+
+  /// Snapshot of what a walk-in would have waited, captured at order time so
+  /// the "minutes saved" metric cannot be rewritten by later shop edits.
+  baselineWaitMinutes Int @default(15)
+  /// When the customer actually reached the shop — set by the "I'm here" tap or
+  /// by automatic geofence detection. Without it we cannot know how long the
+  /// customer really waited, only how long the food sat.
+  customerArrivedAt   DateTime?
+  /// Populated on pickup: baselineWait − time the customer actually waited.
+  waitMinutesSaved    Int?
+  /// True when `waitMinutesSaved` was derived from a real arrival time rather
+  /// than the ready-to-collected proxy. Reported separately so the platform's
+  /// headline metric never quietly overstates itself.
+  waitMeasured        Boolean @default(false)
+
+  customerNote String?
+  isCustomList Boolean @default(false)
+  customListText String?
+  slipImageUrl String?
+
+  /// Pickup verification. The QR encodes a signed token; `pickupCode` is the
+  /// typed fallback. Never expose `pickupCode` to anyone but the customer and
+  /// the owning shop.
+  pickupCode         String
+  verifiedAt         DateTime?
+  verificationMethod PickupVerificationMethod?
+
+  rejectionReason   String?
+  cancellationReason String?
+
+  placedAt    DateTime  @default(now())
+  acceptedAt  DateTime?
+  preparingAt DateTime?
+  readyAt     DateTime?
+  pickedUpAt  DateTime?
+  closedAt    DateTime?
+
+  updatedAt DateTime @updatedAt
+
+  items         OrderItem[]
+  statusEvents  OrderStatusEvent[]
+  payments      Payment[]
+  notifications Notification[]
+
+  @@unique([shopId, codeDate, code])
+  @@index([customerId, placedAt])
+  @@index([shopId, status])
+  @@index([shopId, status, placedAt])
+  @@index([status])
+}
+
+model OrderItem {
+  id      String @id @default(cuid())
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  productId String?
+  product   Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  /// Snapshots — a later price or name change must never rewrite history.
+  nameSnapshot     String
+  unitPriceMinor   Int
+  quantity         Int
+  lineTotalMinor   Int
+  prepMinutes      Int
+  /// `[{ groupName, optionName, priceDeltaMinor }]`
+  selectedOptions  Json  @default("[]")
+
+  @@index([orderId])
+}
+
+model OrderStatusEvent {
+  id      String @id @default(cuid())
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  fromStatus OrderStatus?
+  toStatus   OrderStatus
+  note       String?
+
+  actorUserId String?
+  actor       User?   @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([orderId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Payments
+// ---------------------------------------------------------------------------
+
+model Payment {
+  id      String @id @default(cuid())
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  /// "cash" | "mock" | "razorpay" | "upi" | …
+  provider    String
+  /// Provider-side identifier; unique so a duplicated webhook cannot double-pay.
+  providerRef String?       @unique
+  method      PaymentMethod
+  amountMinor Int
+  status      PaymentStatus @default(PENDING)
+  failureReason String?
+
+  /// UPI only. The reference (UTR / "UPI transaction ID") the *customer* typed
+  /// in after paying. Untrusted evidence, not proof — kept so the shop has
+  /// something to search for in their own app, and so a disputed order has an
+  /// audit trail.
+  customerReference String?
+  /// Set when a human at the shop confirmed the money actually arrived.
+  verifiedAt     DateTime?
+  verifiedByUserId String?
+  verifiedBy       User?   @relation("PaymentVerifier", fields: [verifiedByUserId], references: [id], onDelete: SetNull)
+  /// Never contains card data — only the provider's non-sensitive echo.
+  metadata    Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  refunds Refund[]
+
+  @@index([orderId])
+}
+
+model Refund {
+  id        String  @id @default(cuid())
+  paymentId String
+  payment   Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  amountMinor Int
+  reason      String?
+  provider    String
+  providerRef String?       @unique
+  status      PaymentStatus @default(PENDING)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Notifications & favourites
+// ---------------------------------------------------------------------------
+
+enum NotificationType {
+  ORDER_PLACED
+  ORDER_ACCEPTED
+  ORDER_PREPARING
+  ORDER_READY
+  ORDER_DELAYED
+  ORDER_REJECTED
+  ORDER_CANCELLED
+  ORDER_PICKED_UP
+  PAYMENT_SUCCEEDED
+  PAYMENT_FAILED
+  REFUND_INITIATED
+  NEW_ORDER_FOR_SHOP
+  SYSTEM
+}
+
+model Notification {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  orderId String?
+  order   Order?  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  type  NotificationType
+  title String
+  body  String
+  /// In-app deep link, e.g. `/orders/abc123`.
+  href  String?
+
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, createdAt])
+}
+
+/// Single-use, expiring password-reset token.
+///
+/// Only a SHA-256 hash of the token is stored: a leaked database must not let
+/// anyone reset an account. The row survives use (`usedAt`) so a replayed link
+/// can be told apart from an unknown one during support.
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model PushSubscription {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  endpoint String @unique
+  p256dh   String
+  auth     String
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model FavoriteShop {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  shopId String
+  shop   Shop   @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, shopId])
+}
+
+// ---------------------------------------------------------------------------
+// Platform configuration
+// ---------------------------------------------------------------------------
+
+/// Anything an admin may need to change without a deploy: cancellation policy,
+/// commission rate, subscription pricing. Deliberately schemaless.
+model PlatformSetting {
+  key         String   @id
+  value       Json
+  description String?
+  updatedAt   DateTime @updatedAt
+}

@@ -1,0 +1,247 @@
+@import 'tailwindcss';
+
+/* ==========================================================================
+   Takeaway design system
+   --------------------------------------------------------------------------
+   Every colour, radius, shadow and duration used anywhere in the app is
+   declared here as a token and consumed through Tailwind utilities
+   (`bg-surface`, `text-muted`, `rounded-card`, `shadow-card`, …).
+
+   The palette is built around one warm accent so the product reads as friendly
+   and local rather than corporate, plus a small set of *semantic* status
+   colours. Status is never communicated by colour alone — every badge pairs a
+   colour with a label and an icon.
+   ========================================================================== */
+
+@theme {
+  /* -- Brand ------------------------------------------------------------- */
+  --color-brand-50: #fff7ed;
+  --color-brand-100: #ffedd5;
+  --color-brand-200: #fed7aa;
+  --color-brand-300: #fdba74;
+  --color-brand-400: #fb923c;
+  --color-brand-500: #f97316;
+  --color-brand-600: #ea580c;
+  --color-brand-700: #c2410c;
+  --color-brand-800: #9a3412;
+  --color-brand-900: #7c2d12;
+
+  /* -- Neutrals ---------------------------------------------------------- */
+  --color-ink-50: #f8fafc;
+  --color-ink-100: #f1f5f9;
+  --color-ink-200: #e2e8f0;
+  --color-ink-300: #cbd5e1;
+  --color-ink-400: #94a3b8;
+  --color-ink-500: #64748b;
+  --color-ink-600: #475569;
+  --color-ink-700: #334155;
+  --color-ink-800: #1e293b;
+  --color-ink-900: #0f172a;
+
+  /* -- Status ------------------------------------------------------------
+     `ready` is the celebratory one: it is the moment the whole product exists
+     for, so it gets the most saturated treatment in the UI. */
+  --color-success-50: #ecfdf5;
+  --color-success-100: #d1fae5;
+  --color-success-500: #10b981;
+  --color-success-600: #059669;
+  --color-success-700: #047857;
+
+  --color-warning-50: #fffbeb;
+  --color-warning-100: #fef3c7;
+  --color-warning-500: #f59e0b;
+  --color-warning-600: #d97706;
+  --color-warning-700: #b45309;
+
+  --color-danger-50: #fef2f2;
+  --color-danger-100: #fee2e2;
+  --color-danger-500: #ef4444;
+  --color-danger-600: #dc2626;
+  --color-danger-700: #b91c1c;
+
+  --color-info-50: #eff6ff;
+  --color-info-100: #dbeafe;
+  --color-info-500: #3b82f6;
+  --color-info-600: #2563eb;
+  --color-info-700: #1d4ed8;
+
+  /* -- Surfaces (light) --------------------------------------------------- */
+  --color-canvas: #f6f7f9;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f1f5f9;
+  --color-border: #e5e9ef;
+  --color-foreground: #0f172a;
+  --color-muted: #64748b;
+
+  /* -- Radii -------------------------------------------------------------- */
+  --radius-field: 0.75rem;
+  --radius-card: 1.25rem;
+  --radius-sheet: 1.75rem;
+  --radius-pill: 999px;
+
+  /* -- Elevation ---------------------------------------------------------- */
+  --shadow-card: 0 1px 2px rgb(15 23 42 / 0.04), 0 6px 20px -8px rgb(15 23 42 / 0.12);
+  --shadow-raised: 0 2px 4px rgb(15 23 42 / 0.05), 0 14px 32px -12px rgb(15 23 42 / 0.2);
+  --shadow-bar: 0 -6px 24px -10px rgb(15 23 42 / 0.28);
+
+  /* -- Motion — fast on purpose. Ordering must never feel gated by an
+        animation. ---------------------------------------------------------- */
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+
+  --font-sans: var(--font-app-sans), ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+/* Dark theme. Tokens only — no component knows which theme is active. */
+@media (prefers-color-scheme: dark) {
+  @theme {
+    --color-canvas: #0b1220;
+    --color-surface: #111a2b;
+    --color-surface-muted: #17233a;
+    --color-border: #24314b;
+    --color-foreground: #e8edf6;
+    --color-muted: #94a3b8;
+
+    --shadow-card: 0 1px 2px rgb(0 0 0 / 0.4), 0 6px 20px -8px rgb(0 0 0 / 0.6);
+    --shadow-raised: 0 2px 4px rgb(0 0 0 / 0.45), 0 14px 32px -12px rgb(0 0 0 / 0.7);
+    --shadow-bar: 0 -6px 24px -10px rgb(0 0 0 / 0.75);
+  }
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    /* Respect the iOS home indicator / Android gesture bar in the PWA. */
+    padding-bottom: env(safe-area-inset-bottom);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* A visible, consistent focus ring everywhere — keyboard users must never
+     have to guess where they are. */
+  :focus-visible {
+    outline: 2px solid var(--color-brand-500);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+
+  /* Native controls should follow the theme (date pickers, scrollbars). */
+  :root {
+    color-scheme: light dark;
+  }
+
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+  }
+}
+
+@layer utilities {
+  /* Horizontal category rails: scrollable, snappy, no visible scrollbar. */
+  .scroll-rail {
+    display: flex;
+    gap: 0.5rem;
+    overflow-x: auto;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .scroll-rail::-webkit-scrollbar {
+    display: none;
+  }
+  .scroll-rail > * {
+    scroll-snap-align: start;
+    flex: 0 0 auto;
+  }
+
+  .skeleton {
+    background-image: linear-gradient(
+      90deg,
+      var(--color-surface-muted) 25%,
+      color-mix(in srgb, var(--color-surface-muted) 60%, var(--color-surface)) 37%,
+      var(--color-surface-muted) 63%
+    );
+    background-size: 400% 100%;
+    animation: skeleton-shimmer 1.3s ease-in-out infinite;
+  }
+
+  @keyframes skeleton-shimmer {
+    0% {
+      background-position: 100% 50%;
+    }
+    100% {
+      background-position: 0 50%;
+    }
+  }
+
+  .animate-rise {
+    animation: rise 0.22s var(--ease-out-soft) both;
+  }
+
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .animate-pop {
+    animation: pop 0.24s var(--ease-out-soft) both;
+  }
+
+  @keyframes pop {
+    0% {
+      transform: scale(0.9);
+      opacity: 0;
+    }
+    60% {
+      transform: scale(1.04);
+    }
+    100% {
+      transform: scale(1);
+      opacity: 1;
+    }
+  }
+
+  /* The "your order is ready" pulse. Deliberately slow and low-contrast so it
+     reads as celebratory rather than as an alarm. */
+  .animate-ready-glow {
+    animation: ready-glow 2.4s ease-in-out infinite;
+  }
+
+  @keyframes ready-glow {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-success-500) 40%, transparent);
+    }
+    50% {
+      box-shadow: 0 0 0 12px color-mix(in srgb, var(--color-success-500) 0%, transparent);
+    }
+  }
+}
+
+/* Users who ask for reduced motion get none of it. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
