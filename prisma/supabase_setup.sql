@@ -720,14 +720,14 @@ ALTER TABLE "FavoriteShop" ADD CONSTRAINT "FavoriteShop_shopId_fkey" FOREIGN KEY
 -- ===========================================================================
 
 -- 1. Insert Default Shop Categories
-INSERT INTO "Category" ("id", "slug", "name", "emoji", "sortOrder", "createdAt", "updatedAt")
+INSERT INTO "Category" ("id", "slug", "name", "emoji", "sortOrder")
 VALUES
-  ('cat_tea', 'tea', 'Tea', '☕', 1, NOW(), NOW()),
-  ('cat_breakfast', 'breakfast', 'Breakfast', '🍛', 2, NOW(), NOW()),
-  ('cat_juice', 'juice', 'Juice', '🥤', 3, NOW(), NOW()),
-  ('cat_fast_food', 'fast-food', 'Fast Food', '🍔', 4, NOW(), NOW()),
-  ('cat_bakery', 'bakery', 'Bakery', '🥐', 5, NOW(), NOW()),
-  ('cat_street_food', 'street-food', 'Street Food', '🌯', 6, NOW(), NOW())
+  ('cat_tea', 'tea', 'Tea', '☕', 1),
+  ('cat_breakfast', 'breakfast', 'Breakfast', '🍛', 2),
+  ('cat_juice', 'juice', 'Juice', '🥤', 3),
+  ('cat_fast_food', 'fast-food', 'Fast Food', '🍔', 4),
+  ('cat_bakery', 'bakery', 'Bakery', '🥐', 5),
+  ('cat_street_food', 'street-food', 'Street Food', '🌯', 6)
 ON CONFLICT ("slug") DO NOTHING;
 
 -- 2. Insert Initial Demo Users (Password: takeaway123)
