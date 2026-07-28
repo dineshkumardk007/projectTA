@@ -66,7 +66,9 @@ export function ShopStatusControl({
         setPrepMinutes(data.prepMinutes);
         setChange({ from: data.previousPrepMinutes, to: data.prepMinutes });
       }
-      router.refresh();
+      React.startTransition(() => {
+        router.refresh();
+      });
     } catch {
       setStatus(previous);
       toast('We could not reach the server.', 'error');

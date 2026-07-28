@@ -257,6 +257,30 @@
   }
 }
 
+/* Touch & Interaction Optimizations for Smooth UI */
+html {
+  scroll-behavior: smooth;
+  -webkit-tap-highlight-color: transparent;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+a,
+input,
+select,
+textarea,
+label {
+  touch-action: manipulation;
+}
+
+/* Hardware accelerated transitions for card and sheet animations */
+.animate-rise,
+.animate-pop,
+.animate-ready-glow {
+  will-change: transform, opacity;
+}
+
 /* Users who ask for reduced motion get none of it. */
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -268,3 +292,4 @@
     scroll-behavior: auto !important;
   }
 }
+
