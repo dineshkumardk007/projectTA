@@ -1,5 +1,8 @@
--- CreateSchema
-CREATE SCHEMA IF NOT EXISTS "public";
+-- Reset public schema cleanly if running setup on an existing database
+DROP SCHEMA IF EXISTS "public" CASCADE;
+CREATE SCHEMA "public";
+GRANT ALL ON SCHEMA "public" TO postgres;
+GRANT ALL ON SCHEMA "public" TO public;
 
 -- CreateEnum
 CREATE TYPE "UserRole" AS ENUM ('CUSTOMER', 'MERCHANT', 'STAFF', 'ADMIN');
