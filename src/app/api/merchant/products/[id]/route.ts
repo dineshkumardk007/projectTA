@@ -3,10 +3,23 @@ import { db } from '@/lib/db';
 import { DomainError, ok, route } from '@/lib/api';
 import { requireShopAccess, requireUser } from '@/lib/auth/guards';
 import { shopLocalDate } from '@/lib/domain/local-date';
+import { isPlatformImageUrl } from '@/lib/domain/image-url';
+import { platformImageOrigins } from '@/lib/providers/storage';
 
 const patchSchema = z.object({
   name: z.string().trim().min(1).max(80).optional(),
   description: z.string().trim().max(300).nullable().optional(),
+  /** Restricted to images this platform stored — see `domain/image-url`. */
+  imageUrl: z
+    .string()
+    .trim()
+    .max(500)
+    .nullable()
+    .optional()
+    .refine(
+      (value) => isPlatformImageUrl(value, platformImageOrigins()),
+      'Upload an image rather than linking to one.',
+    ),
   priceMinor: z.number().int().min(0).max(10_000_00).optional(),
   prepMinutes: z.number().int().min(0).max(180).optional(),
   unitLabel: z.string().trim().max(40).optional(),

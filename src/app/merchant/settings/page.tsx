@@ -14,9 +14,12 @@ export const metadata: Metadata = { title: 'Shop settings' };
 export default async function ShopSettingsPage() {
   const { shop } = await requireMerchantContext();
 
-  const [hours, qr] = await Promise.all([
+  const [hours, qr, category] = await Promise.all([
     db.shopOperatingHours.findMany({ where: { shopId: shop.id }, orderBy: { dayOfWeek: 'asc' } }),
     renderShopQr(shop.publicQrToken),
+    // Only for the placeholder artwork behind an empty photo slot, so the
+    // merchant sees what a customer sees before they upload anything.
+    db.category.findUnique({ where: { id: shop.categoryId }, select: { emoji: true } }),
   ]);
 
   return (
@@ -60,6 +63,10 @@ export default async function ShopSettingsPage() {
       <ShopSettingsForm
         shop={{
           id: shop.id,
+          slug: shop.slug,
+          categoryEmoji: category?.emoji ?? '🍽️',
+          coverImageUrl: shop.coverImageUrl,
+          logoImageUrl: shop.logoImageUrl,
           name: shop.name,
           tagline: shop.tagline,
           description: shop.description,

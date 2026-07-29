@@ -5,12 +5,17 @@ import { useRouter } from 'next/navigation';
 import { Card, Input, Label, Textarea } from '@/components/ui/primitives';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/toast';
+import { ImageUploadField } from '@/components/merchant/image-upload-field';
 
-const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const DAYS =['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 export type EditableShop = {
   id: string;
+  slug: string;
   name: string;
+  categoryEmoji: string;
+  coverImageUrl: string | null;
+  logoImageUrl: string | null;
   tagline: string | null;
   description: string | null;
   addressLine: string;
@@ -61,6 +66,10 @@ export function ShopSettingsForm({ shop }: { shop: EditableShop }) {
           name: String(form.get('name')).trim(),
           tagline: String(form.get('tagline') ?? '').trim() || null,
           description: String(form.get('description') ?? '').trim() || null,
+          // Empty string means "removed", which has to reach the server as null
+          // rather than being dropped, or clearing a photo would silently fail.
+          coverImageUrl: String(form.get('coverImageUrl') ?? '').trim() || null,
+          logoImageUrl: String(form.get('logoImageUrl') ?? '').trim() || null,
           addressLine: String(form.get('addressLine')).trim(),
           phone: String(form.get('phone')).trim(),
           basePrepMinutes: Number(form.get('basePrepMinutes')),
@@ -94,6 +103,32 @@ export function ShopSettingsForm({ shop }: { shop: EditableShop }) {
     <form onSubmit={submit} className="space-y-4">
       <Card className="space-y-4 p-4">
         <h2 className="font-bold">Shop profile</h2>
+
+        {/* Photographs first: a listing with none converts worse than one with
+            them, whatever the menu says. */}
+        <ImageUploadField
+          name="coverImageUrl"
+          label="Cover photo"
+          hint="Shown across the top of your shop page and on discovery cards."
+          shopId={shop.id}
+          folder="shops"
+          initialUrl={shop.coverImageUrl}
+          seed={shop.slug}
+          emoji={shop.categoryEmoji}
+          aspect="wide"
+        />
+
+        <ImageUploadField
+          name="logoImageUrl"
+          label="Logo"
+          hint="Square works best — a sign, a logo, or the shopfront."
+          shopId={shop.id}
+          folder="shops"
+          initialUrl={shop.logoImageUrl}
+          seed={`${shop.slug}-logo`}
+          emoji={shop.categoryEmoji}
+          aspect="square"
+        />
 
         <div>
           <Label htmlFor="s-name">Shop name</Label>

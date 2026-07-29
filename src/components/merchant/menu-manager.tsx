@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { BottomSheet } from '@/components/ui/bottom-sheet';
 import { useToast } from '@/components/ui/toast';
 import { OptionGroupEditor, type EditableGroup } from '@/components/merchant/option-group-editor';
+import { ImageUploadField } from '@/components/merchant/image-upload-field';
 import { formatMinor } from '@/lib/domain/money';
 import { cn } from '@/lib/cn';
 
@@ -24,6 +25,7 @@ export type ManagedProduct = {
   id: string;
   name: string;
   description: string | null;
+  imageUrl: string | null;
   priceMinor: number;
   prepMinutes: number;
   unitLabel: string;
@@ -224,6 +226,7 @@ export function MenuManager({
           key={editing.id}
           product={editing}
           sections={sections}
+          shopId={shopId}
           busy={busyId === editing.id}
           onClose={() => setEditing(null)}
           onSave={async (changes) => {
@@ -261,6 +264,7 @@ export function MenuManager({
       {creating ? (
         <ProductSheet
           sections={sections}
+          shopId={shopId}
           busy={false}
           onClose={() => setCreating(false)}
           onSave={async (changes) => {
@@ -371,6 +375,7 @@ function SectionSheet({
 function ProductSheet({
   product,
   sections,
+  shopId,
   busy,
   onClose,
   onSave,
@@ -378,6 +383,8 @@ function ProductSheet({
 }: {
   product?: ManagedProduct;
   sections: { id: string; name: string }[];
+  /** Needed by the photo picker, which authorises the upload against this shop. */
+  shopId: string;
   busy: boolean;
   onClose: () => void;
   onSave: (changes: Record<string, unknown>) => void | Promise<void>;
@@ -396,6 +403,9 @@ function ProductSheet({
     await onSave({
       name: String(form.get('name')).trim(),
       description: String(form.get('description') ?? '').trim() || null,
+      // Empty means the merchant removed the photo, which must reach the server
+      // as null rather than being omitted.
+      imageUrl: String(form.get('imageUrl') ?? '').trim() || null,
       priceMinor: Math.round(rupees * 100),
       prepMinutes: Number(form.get('prepMinutes')),
       unitLabel: String(form.get('unitLabel') ?? '').trim(),
@@ -424,6 +434,17 @@ function ProductSheet({
           <Label htmlFor="p-name">Item name</Label>
           <Input id="p-name" name="name" required maxLength={80} defaultValue={product?.name} placeholder="Masala Dosa" />
         </div>
+
+        <ImageUploadField
+          name="imageUrl"
+          label="Photo"
+          hint="A clear photo of the item sells it better than any description."
+          shopId={shopId}
+          folder="products"
+          initialUrl={product?.imageUrl ?? null}
+          seed={product?.id ?? 'new-item'}
+          aspect="square"
+        />
 
         <div>
           <Label htmlFor="p-desc">Description</Label>

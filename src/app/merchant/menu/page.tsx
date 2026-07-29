@@ -38,6 +38,7 @@ export default async function MerchantMenuPage() {
           id: product.id,
           name: product.name,
           description: product.description,
+          imageUrl: product.imageUrl,
           priceMinor: product.priceMinor,
           prepMinutes: product.prepMinutes,
           unitLabel: product.unitLabel,

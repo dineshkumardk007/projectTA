@@ -3,6 +3,11 @@ import { db } from '@/lib/db';
 import { ok, route } from '@/lib/api';
 import { requireShopAccess, requireUser } from '@/lib/auth/guards';
 import { isValidUpiId } from '@/lib/domain/upi';
+import { isPlatformImageUrl } from '@/lib/domain/image-url';
+import { platformImageOrigins } from '@/lib/providers/storage';
+
+/** Only images this platform stored — see `domain/image-url` for why. */
+const ownImage = (value: string | null | undefined) => isPlatformImageUrl(value, platformImageOrigins());
 
 const hoursSchema = z.object({
   dayOfWeek: z.number().int().min(0).max(6),
@@ -15,6 +20,15 @@ const patchSchema = z.object({
   name: z.string().trim().min(2).max(80).optional(),
   tagline: z.string().trim().max(120).nullable().optional(),
   description: z.string().trim().max(600).nullable().optional(),
+  /**
+   * Set by the upload endpoint, which is what stored the file and minted the
+   * URL. Accepting an arbitrary string would let a merchant point their listing
+   * at any image on the internet — including one that later changes to
+   * something else, on a server they do not control. Restricted to paths and
+   * URLs this platform issued.
+   */
+  coverImageUrl: z.string().trim().max(500).nullable().optional().refine(ownImage, 'Upload an image rather than linking to one.'),
+  logoImageUrl: z.string().trim().max(500).nullable().optional().refine(ownImage, 'Upload an image rather than linking to one.'),
   addressLine: z.string().trim().min(4).max(160).optional(),
   phone: z.string().trim().min(6).max(20).optional(),
   basePrepMinutes: z.number().int().min(1).max(180).optional(),

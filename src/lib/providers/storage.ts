@@ -25,6 +25,25 @@ export interface StorageProvider {
   delete(key: string): Promise<void>;
 }
 
+/**
+ * Storage is configured but cannot accept writes here.
+ *
+ * Distinct from a rejected file: nothing the merchant does differently will
+ * help, so the API turns this into a 503 with an operator-facing message rather
+ * than a validation error aimed at the person holding the phone.
+ */
+export class StorageUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'StorageUnavailableError';
+  }
+}
+
+/** Vercel, AWS Lambda and friends: read-only disk, discarded between requests. */
+function isServerlessRuntime(): boolean {
+  return Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.LAMBDA_TASK_ROOT);
+}
+
 const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/avif']);
 
 export function assertUploadableImage(contentType: string, sizeBytes: number) {
@@ -49,6 +68,21 @@ export class LocalStorageProvider implements StorageProvider {
 
   async put(input: { body: Buffer; contentType: string; folder: string; filename: string }): Promise<StoredObject> {
     assertUploadableImage(input.contentType, input.body.byteLength);
+
+    /**
+     * Serverless filesystems are read-only and ephemeral.
+     *
+     * On Vercel this write either throws EROFS or "succeeds" into a container
+     * that is discarded moments later — the merchant sees an uploaded photo
+     * that is gone by the next request, from a different instance. Failing here
+     * with an instruction is kinder than either outcome.
+     */
+    if (isServerlessRuntime()) {
+      throw new StorageUnavailableError(
+        'Uploads need object storage in this environment. Set STORAGE_PROVIDER="s3" with the S3_* variables ' +
+          '(Cloudflare R2 has a free tier) — the local provider writes to disk, which serverless hosting discards.',
+      );
+    }
     const key = safeKey(input.folder, input.filename);
     const target = path.join(this.root, key);
     await fs.mkdir(path.dirname(target), { recursive: true });
@@ -136,6 +170,14 @@ export class S3StorageProvider implements StorageProvider {
       }),
     );
   }
+}
+
+/**
+ * Origins that images may legitimately be served from, for validating what a
+ * merchant saves against a listing. See `domain/image-url`.
+ */
+export function platformImageOrigins(): string[] {
+  return [env.S3_PUBLIC_BASE_URL, env.S3_ENDPOINT].filter((value) => value.length > 0);
 }
 
 let cached: StorageProvider | null = null;
