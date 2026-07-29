@@ -212,6 +212,53 @@ No secret is hardcoded anywhere, and card data never touches this application.
 
 ---
 
+## Deploying
+
+### Put the functions next to the database
+
+`vercel.json` pins `regions: ["bom1"]` (Mumbai). This is not cosmetic. Vercel
+defaults to `iad1` (Washington DC), and every page that reads the database is
+dynamic, so a mismatch means each query crosses the planet twice.
+
+Measured on this app with the database in Mumbai and functions left on the
+default region:
+
+| Route | First byte | Fully loaded |
+| --- | --- | --- |
+| `/signin` (static, no database) | 236 ms | 238 ms |
+| `/shops` (dynamic) | 522 ms | **3503 ms** |
+
+The static page was fine; the database-backed pages spent roughly three seconds
+in transit. **Set this to whichever region your Supabase project is in** — check
+the `X-Vercel-Id` response header to confirm which region actually served you:
+
+```bash
+curl -sI https://your-app.vercel.app/ | grep -i x-vercel-id
+```
+
+It reads `edge::function::id`, so `bom1::iad1::…` means the request entered at
+Mumbai but ran in Washington — the mismatch above. `bom1::bom1::…` is correct.
+Common regions: `bom1` Mumbai, `sin1` Singapore, `iad1` Washington.
+
+### Connection strings
+
+Supabase gives two. Both are needed, and they are not interchangeable:
+
+- `DATABASE_URL` — the **pooled** connection (port 6543). Serverless functions
+  open many short-lived connections, which is what the pooler exists to absorb.
+  Append `?pgbouncer=true&connection_limit=1`.
+- `DIRECT_URL` — the **direct** connection (port 5432), used only for migrations,
+  which a pooler interferes with.
+
+### A poster QR is permanent
+
+`NEXT_PUBLIC_APP_URL` is baked into the printed counter QR codes. A deployment
+refuses to build if it points at `localhost` or a LAN address — see
+`src/lib/domain/public-url.ts`. Local production builds only warn, since testing
+on a phone over Wi-Fi is a legitimate reason to hold a LAN address.
+
+---
+
 ## Test credentials
 
 All demo accounts use the password **`takeaway123`**.
