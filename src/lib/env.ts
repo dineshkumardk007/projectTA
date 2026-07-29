@@ -16,6 +16,8 @@ const schema = z.object({
     .string()
     .min(32, 'AUTH_SECRET must be at least 32 characters — generate one with `openssl rand -base64 48`'),
   AUTH_SESSION_DAYS: z.coerce.number().int().positive().default(30),
+  GOOGLE_CLIENT_ID: z.string().optional().default(''),
+  GOOGLE_CLIENT_SECRET: z.string().optional().default(''),
 
   NEXT_PUBLIC_APP_URL: z.string().url().default('http://localhost:3000'),
 
@@ -92,6 +94,7 @@ export const providerReadiness = {
   push: env.PUSH_PROVIDER === 'webpush' && env.VAPID_PRIVATE_KEY.length > 0,
   storage: env.STORAGE_PROVIDER === 's3' && env.S3_BUCKET.length > 0,
   email: env.EMAIL_PROVIDER === 'resend' && env.RESEND_API_KEY.length > 0,
+  googleAuth: env.GOOGLE_CLIENT_ID.length > 0 && env.GOOGLE_CLIENT_SECRET.length > 0,
   /** Can merchants be shown a "pay us" QR code yet? */
   platformBilling: env.PLATFORM_UPI_ID.length > 0,
 };

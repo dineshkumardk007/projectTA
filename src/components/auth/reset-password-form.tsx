@@ -4,7 +4,7 @@ import * as React from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { Card, FieldError, Input, Label, PasswordInput } from '@/components/ui/primitives';
+import { Card, FieldError, Label, PasswordInput } from '@/components/ui/primitives';
 import { useToast } from '@/components/ui/toast';
 
 export function ResetPasswordForm() {

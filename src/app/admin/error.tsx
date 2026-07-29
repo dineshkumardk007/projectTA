@@ -22,7 +22,7 @@ export default function AdminError({
         <div className="mx-auto flex size-12 items-center justify-center rounded-full bg-danger-100 dark:bg-danger-500/20 text-danger-600">
           <AlertTriangle className="size-6" />
         </div>
-        <h2 className="text-xl font-bold">This page couldn't load</h2>
+        <h2 className="text-xl font-bold">This page couldn&apos;t load</h2>
         <p className="text-sm text-muted">
           {error.message || 'An unexpected error occurred while loading this admin section.'}
         </p>

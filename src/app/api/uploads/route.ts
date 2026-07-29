@@ -1,6 +1,6 @@
 import { DomainError, clientKey, ok, rateLimit, route, validateSameOrigin } from '@/lib/api';
 import { requireShopAccess, requireUser } from '@/lib/auth/guards';
-import { assertUploadableImage, getStorageProvider, StorageUnavailableError } from '@/lib/providers/storage';
+import { getStorageProvider, StorageUnavailableError } from '@/lib/providers/storage';
 
 /**
  * Image upload for shop and product photography.

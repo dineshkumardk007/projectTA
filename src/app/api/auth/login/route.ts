@@ -17,7 +17,7 @@ export const POST = route(async (request: Request) => {
 
   // Identical message and comparable timing whether the email exists or not, so
   // this endpoint cannot be used to enumerate accounts.
-  const passwordOk = user ? await verifyPassword(body.password, user.passwordHash) : false;
+  const passwordOk = user && user.passwordHash ? await verifyPassword(body.password, user.passwordHash) : false;
   if (!user || !passwordOk) {
     throw new DomainError('That email and password do not match.', 401, 'invalid_credentials');
   }
