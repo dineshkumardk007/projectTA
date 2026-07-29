@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { env } from '@/lib/env';
 import { setSessionCookie, signSession } from '@/lib/auth/session';
 import { recordSignIn } from '@/lib/services/auth';
+import { getRedirectUri } from '../login/route';
 
 const HOME_BY_ROLE: Record<string, string> = {
   CUSTOMER: '/',
@@ -17,12 +18,11 @@ export async function GET(request: Request) {
   const error = searchParams.get('error');
   const state = searchParams.get('state');
 
-  const host = request.headers.get('host') ?? 'localhost:3000';
-  const protocol = request.headers.get('x-forwarded-proto') ?? (host.includes('localhost') ? 'http' : 'https');
-  const appBaseUrl = `${protocol}://${host}`;
-  const redirectUri = `${appBaseUrl}/api/auth/google/callback`;
+  const redirectUri = getRedirectUri(request);
+  const appBaseUrl = redirectUri.replace('/api/auth/google/callback', '');
 
   if (error || !code) {
+    console.warn('[Google OAuth] OAuth code missing or error returned from Google:', error);
     return NextResponse.redirect(`${appBaseUrl}/signin?error=google_auth_failed`);
   }
 
@@ -41,12 +41,14 @@ export async function GET(request: Request) {
     });
 
     if (!tokenResponse.ok) {
-      console.error('[Google OAuth] Token exchange failed:', await tokenResponse.text());
+      const errText = await tokenResponse.text();
+      console.error('[Google OAuth] Token exchange failed with redirect_uri:', redirectUri, 'Error:', errText);
       return NextResponse.redirect(`${appBaseUrl}/signin?error=google_token_failed`);
     }
 
     const tokens = (await tokenResponse.json()) as { access_token?: string; id_token?: string };
     if (!tokens.access_token) {
+      console.error('[Google OAuth] Access token missing in response');
       return NextResponse.redirect(`${appBaseUrl}/signin?error=google_token_missing`);
     }
 
@@ -56,6 +58,7 @@ export async function GET(request: Request) {
     });
 
     if (!userinfoResponse.ok) {
+      console.error('[Google OAuth] Userinfo fetch failed');
       return NextResponse.redirect(`${appBaseUrl}/signin?error=google_profile_failed`);
     }
 
@@ -67,38 +70,60 @@ export async function GET(request: Request) {
     };
 
     if (!profile.email) {
+      console.error('[Google OAuth] Profile email missing');
       return NextResponse.redirect(`${appBaseUrl}/signin?error=google_email_missing`);
     }
 
-    // 3. Find or create user in Prisma
-    let user = await db.user.findFirst({
-      where: {
-        OR: [{ googleId: profile.sub }, { email: profile.email }],
-      },
-    });
+    // 3. Resilient user lookup / creation in Prisma
+    let user = null;
 
-    if (user) {
-      // Link googleId if missing
-      if (!user.googleId) {
-        user = await db.user.update({
-          where: { id: user.id },
-          data: { googleId: profile.sub },
-        });
-      }
-    } else {
-      // Create new customer account
-      const displayName = profile.name || profile.email.split('@')[0] || 'User';
-      user = await db.user.create({
-        data: {
-          name: displayName,
-          email: profile.email,
-          googleId: profile.sub,
-          role: 'CUSTOMER',
-          customerProfile: {
-            create: {},
-          },
+    try {
+      user = await db.user.findFirst({
+        where: {
+          OR: [{ googleId: profile.sub }, { email: profile.email }],
         },
       });
+    } catch {
+      // Fall back to lookup by email only if googleId column is not queryable
+      user = await db.user.findUnique({
+        where: { email: profile.email },
+      });
+    }
+
+    if (user) {
+      if (!user.googleId) {
+        try {
+          user = await db.user.update({
+            where: { id: user.id },
+            data: { googleId: profile.sub },
+          });
+        } catch {
+          // Ignore if googleId update fails (e.g. column not yet migrated)
+        }
+      }
+    } else {
+      const displayName = profile.name || profile.email.split('@')[0] || 'User';
+      try {
+        user = await db.user.create({
+          data: {
+            name: displayName,
+            email: profile.email,
+            googleId: profile.sub,
+            role: 'CUSTOMER',
+            customerProfile: { create: {} },
+          },
+        });
+      } catch {
+        // Fall back without googleId field if column missing on live DB
+        user = await db.user.create({
+          data: {
+            name: displayName,
+            email: profile.email,
+            role: 'CUSTOMER',
+            customerProfile: { create: {} },
+          },
+        });
+      }
     }
 
     if (!user.isActive) {
@@ -110,7 +135,7 @@ export async function GET(request: Request) {
       await signSession({ sub: user.id, role: user.role, name: user.name, ver: user.tokenVersion }),
     );
 
-    // 5. Record sign-in metrics asynchronously
+    // 5. Record sign-in metrics
     await recordSignIn(user.id, request).catch(() => null);
 
     // 6. Redirect user
@@ -119,7 +144,7 @@ export async function GET(request: Request) {
 
     return NextResponse.redirect(`${appBaseUrl}${targetUrl}`);
   } catch (err) {
-    console.error('[Google OAuth] Callback handler error:', err);
+    console.error('[Google OAuth] Callback handler unexpected error:', err);
     return NextResponse.redirect(`${appBaseUrl}/signin?error=google_auth_error`);
   }
 }
