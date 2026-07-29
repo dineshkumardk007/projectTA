@@ -4,7 +4,7 @@ import * as React from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
-import { Card, FieldError, Input, Label } from '@/components/ui/primitives';
+import { Card, FieldError, Input, Label, PasswordInput } from '@/components/ui/primitives';
 
 /**
  * Sign-in / sign-up form.
@@ -174,10 +174,9 @@ export function AuthForm({ mode }: { mode: Mode }) {
               </Link>
             ) : null}
           </div>
-          <Input
+          <PasswordInput
             id="password"
             name="password"
-            type="password"
             autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
             required
             minLength={mode === 'signup' ? 8 : undefined}

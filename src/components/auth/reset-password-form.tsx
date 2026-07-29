@@ -4,7 +4,7 @@ import * as React from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { Card, FieldError, Input, Label } from '@/components/ui/primitives';
+import { Card, FieldError, Input, Label, PasswordInput } from '@/components/ui/primitives';
 import { useToast } from '@/components/ui/toast';
 
 export function ResetPasswordForm() {
@@ -76,10 +76,9 @@ export function ResetPasswordForm() {
       <form onSubmit={onSubmit} className="mt-6 space-y-4" noValidate>
         <div>
           <Label htmlFor="password">New password</Label>
-          <Input
+          <PasswordInput
             id="password"
             name="password"
-            type="password"
             autoComplete="new-password"
             required
             minLength={8}
@@ -89,7 +88,7 @@ export function ResetPasswordForm() {
 
         <div>
           <Label htmlFor="confirm">Confirm new password</Label>
-          <Input id="confirm" name="confirm" type="password" autoComplete="new-password" required minLength={8} />
+          <PasswordInput id="confirm" name="confirm" autoComplete="new-password" required minLength={8} />
         </div>
 
         <FieldError>{error}</FieldError>

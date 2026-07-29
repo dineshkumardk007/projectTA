@@ -1,7 +1,8 @@
 import * as React from 'react';
+import { Eye, EyeOff } from 'lucide-react';
 import { cn } from '@/lib/cn';
 
-/** Card, Badge, Input, Select, Textarea, Label, Skeleton — the shared shells. */
+/** Card, Badge, Input, PasswordInput, Select, Textarea, Label, Skeleton — the shared shells. */
 
 export function Card({
   className,
@@ -57,6 +58,36 @@ const FIELD_BASE =
 export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(
   function Input({ className, ...props }, ref) {
     return <input ref={ref} className={cn(FIELD_BASE, 'h-12', className)} {...props} />;
+  },
+);
+
+export const PasswordInput = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(
+  function PasswordInput({ className, ...props }, ref) {
+    const [showPassword, setShowPassword] = React.useState(false);
+
+    return (
+      <div className="relative flex items-center w-full">
+        <input
+          ref={ref}
+          type={showPassword ? 'text' : 'password'}
+          className={cn(FIELD_BASE, 'h-12 pr-11', className)}
+          {...props}
+        />
+        <button
+          type="button"
+          onClick={() => setShowPassword((prev) => !prev)}
+          className="absolute right-3 flex items-center justify-center text-muted hover:text-foreground focus:outline-none p-1.5 rounded-md transition-colors"
+          aria-label={showPassword ? 'Hide password' : 'Show password'}
+          tabIndex={-1}
+        >
+          {showPassword ? (
+            <EyeOff aria-hidden className="size-5" />
+          ) : (
+            <Eye aria-hidden className="size-5" />
+          )}
+        </button>
+      </div>
+    );
   },
 );
 
