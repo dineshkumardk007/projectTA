@@ -75,12 +75,15 @@ export function AuthForm({ mode }: { mode: Mode }) {
   }
 
   const errParam = searchParams.get('error');
+  const msgParam = searchParams.get('msg');
   let oauthError: string | null = null;
-  if (errParam === 'google_auth_failed') oauthError = 'Google authentication was cancelled or failed.';
-  else if (errParam === 'google_token_failed' || errParam === 'google_token_missing') oauthError = 'Failed to exchange token with Google.';
-  else if (errParam === 'google_profile_failed' || errParam === 'google_email_missing') oauthError = 'Could not read Google profile information.';
+  if (errParam === 'google_auth_failed') oauthError = `Google authentication failed or was cancelled. ${msgParam ? `(${msgParam})` : ''}`;
+  else if (errParam === 'google_token_failed') oauthError = `Failed to exchange token with Google. ${msgParam ? `(${msgParam})` : ''}`;
+  else if (errParam === 'google_token_missing') oauthError = 'Access token missing in Google response.';
+  else if (errParam === 'google_profile_failed') oauthError = 'Could not read Google profile information.';
+  else if (errParam === 'google_email_missing') oauthError = 'Email permission is required to sign in.';
   else if (errParam === 'deactivated') oauthError = 'This account has been deactivated. Contact support.';
-  else if (errParam === 'google_auth_error') oauthError = 'An error occurred during Google sign-in.';
+  else if (errParam === 'google_auth_error') oauthError = `Google sign-in error: ${msgParam || 'Unknown error'}`;
 
   const displayError = error ?? oauthError;
 

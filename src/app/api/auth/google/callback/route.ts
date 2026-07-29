@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { env } from '@/lib/env';
-import { setSessionCookie, signSession } from '@/lib/auth/session';
-import { recordSignIn } from '@/lib/services/auth';
+import { SESSION_COOKIE, signSession } from '@/lib/auth/session';
 import { getRedirectUri } from '../login/route';
 
 const HOME_BY_ROLE: Record<string, string> = {
@@ -23,7 +22,7 @@ export async function GET(request: Request) {
 
   if (error || !code) {
     console.warn('[Google OAuth] OAuth code missing or error returned from Google:', error);
-    return NextResponse.redirect(`${appBaseUrl}/signin?error=google_auth_failed`);
+    return NextResponse.redirect(`${appBaseUrl}/signin?error=google_auth_failed&msg=${encodeURIComponent(error || 'No code returned')}`);
   }
 
   try {
@@ -43,7 +42,7 @@ export async function GET(request: Request) {
     if (!tokenResponse.ok) {
       const errText = await tokenResponse.text();
       console.error('[Google OAuth] Token exchange failed with redirect_uri:', redirectUri, 'Error:', errText);
-      return NextResponse.redirect(`${appBaseUrl}/signin?error=google_token_failed`);
+      return NextResponse.redirect(`${appBaseUrl}/signin?error=google_token_failed&msg=${encodeURIComponent(errText)}`);
     }
 
     const tokens = (await tokenResponse.json()) as { access_token?: string; id_token?: string };
@@ -98,7 +97,7 @@ export async function GET(request: Request) {
             data: { googleId: profile.sub },
           });
         } catch {
-          // Ignore if googleId update fails (e.g. column not yet migrated)
+          // Ignore if googleId update fails
         }
       }
     } else {
@@ -130,21 +129,33 @@ export async function GET(request: Request) {
       return NextResponse.redirect(`${appBaseUrl}/signin?error=deactivated`);
     }
 
-    // 4. Issue session cookie
-    await setSessionCookie(
-      await signSession({ sub: user.id, role: user.role, name: user.name, ver: user.tokenVersion }),
-    );
+    // 4. Create signed session JWT token
+    const token = await signSession({
+      sub: user.id,
+      role: user.role,
+      name: user.name,
+      ver: user.tokenVersion,
+    });
 
-    // 5. Record sign-in metrics
-    await recordSignIn(user.id, request).catch(() => null);
-
-    // 6. Redirect user
+    // 5. Determine target redirect URL
     const safeNext = state?.startsWith('/') && !state.startsWith('//') ? state : null;
     const targetUrl = safeNext ?? HOME_BY_ROLE[user.role] ?? '/';
 
-    return NextResponse.redirect(`${appBaseUrl}${targetUrl}`);
-  } catch (err) {
+    // 6. Return redirect response with cookie directly set on headers
+    const response = NextResponse.redirect(`${appBaseUrl}${targetUrl}`);
+
+    response.cookies.set(SESSION_COOKIE, token, {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+      path: '/',
+      maxAge: env.AUTH_SESSION_DAYS * 24 * 60 * 60,
+    });
+
+    return response;
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
     console.error('[Google OAuth] Callback handler unexpected error:', err);
-    return NextResponse.redirect(`${appBaseUrl}/signin?error=google_auth_error`);
+    return NextResponse.redirect(`${appBaseUrl}/signin?error=google_auth_error&msg=${encodeURIComponent(message)}`);
   }
 }
