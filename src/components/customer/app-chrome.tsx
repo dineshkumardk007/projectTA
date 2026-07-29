@@ -15,7 +15,12 @@ export function CustomerHeader({
   unreadCount,
   signedIn,
 }: {
-  unreadCount: number;
+  /**
+   * Unresolved on purpose. The layout hands the query over rather than awaiting
+   * it, so a slow count cannot hold up the page behind it — the badge streams in
+   * on its own once the database answers.
+   */
+  unreadCount: Promise<number>;
   signedIn: boolean;
 }) {
   const { label, status, request } = useLocation();
@@ -49,14 +54,14 @@ export function CustomerHeader({
         <Link
           href="/notifications"
           className="relative flex size-10 items-center justify-center rounded-full bg-surface text-foreground shadow-[var(--shadow-card)]"
-          aria-label={unreadCount > 0 ? `Notifications, ${unreadCount} unread` : 'Notifications'}
+          aria-label="Notifications"
         >
           <Bell aria-hidden className="size-[18px]" />
-          {unreadCount > 0 ? (
-            <span className="absolute -right-0.5 -top-0.5 flex min-w-5 items-center justify-center rounded-full bg-brand-500 px-1 text-[10px] font-bold text-white">
-              {unreadCount > 9 ? '9+' : unreadCount}
-            </span>
-          ) : null}
+          {/* No fallback: an empty bell is the right thing to show while the
+              count is still in flight, and it never shifts the layout. */}
+          <React.Suspense fallback={null}>
+            <UnreadBadge countPromise={unreadCount} />
+          </React.Suspense>
         </Link>
 
         <Link
@@ -68,6 +73,18 @@ export function CustomerHeader({
         </Link>
       </div>
     </header>
+  );
+}
+
+function UnreadBadge({ countPromise }: { countPromise: Promise<number> }) {
+  const count = React.use(countPromise);
+  if (count <= 0) return null;
+
+  return (
+    <span className="absolute -right-0.5 -top-0.5 flex min-w-5 items-center justify-center rounded-full bg-brand-500 px-1 text-[10px] font-bold text-white">
+      {count > 9 ? '9+' : count}
+      <span className="sr-only"> unread notifications</span>
+    </span>
   );
 }
 

@@ -252,9 +252,15 @@ export async function getShopBySlug(slug: string, viewerId?: string | null) {
 
   if (!shop || !shop.isActive || !shop.isVerified) return null;
 
-  const activeOrders = await db.order.count({
-    where: { shopId: shop.id, status: { in: ACTIVE_STATUSES } },
-  });
+  // Both of these depend on the shop's id but not on each other, so they go out
+  // together. Run sequentially this was two extra network waits on the slowest
+  // screen in the app — the one a customer opens before every single order.
+  const [activeOrders, favorite] = await Promise.all([
+    db.order.count({ where: { shopId: shop.id, status: { in: ACTIVE_STATUSES } } }),
+    viewerId
+      ? db.favoriteShop.findUnique({ where: { userId_shopId: { userId: viewerId, shopId: shop.id } } })
+      : Promise.resolve(null),
+  ]);
 
   const orderability = getOrderability({
     status: shop.status,
@@ -271,11 +277,7 @@ export async function getShopBySlug(slug: string, viewerId?: string | null) {
     status: shop.status,
   });
 
-  const isFavorite = viewerId
-    ? (await db.favoriteShop.findUnique({
-        where: { userId_shopId: { userId: viewerId, shopId: shop.id } },
-      })) != null
-    : false;
+  const isFavorite = favorite != null;
 
   // Resolved once here rather than in the page, so "special today" means the
   // same thing on the shop page as it does on the discovery card.

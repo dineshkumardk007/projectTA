@@ -1,4 +1,5 @@
 import 'server-only';
+import { cache } from 'react';
 import { redirect } from 'next/navigation';
 import type { Merchant, Shop, User, UserRole } from '@prisma/client';
 import { db } from '@/lib/db';
@@ -16,8 +17,13 @@ export type AuthedUser = Pick<User, 'id' | 'name' | 'email' | 'phone' | 'role' |
  * Resolves the caller from the session cookie *and re-checks the database*.
  * The JWT alone is not trusted for authorisation state: a deactivated user or a
  * bumped `tokenVersion` must stop working immediately, not in 30 days.
+ *
+ * Wrapped in React's `cache` so the layout and the page it wraps share one
+ * lookup instead of issuing the same query twice per navigation. The cache is
+ * per-request, so the database re-check above still happens on every request —
+ * this removes a duplicate round trip, not the security property.
  */
-export async function getCurrentUser(): Promise<AuthedUser | null> {
+export const getCurrentUser = cache(async function getCurrentUser(): Promise<AuthedUser | null> {
   const claims = await readSessionCookie();
   if (!claims) return null;
 
@@ -44,7 +50,7 @@ export async function getCurrentUser(): Promise<AuthedUser | null> {
     role: user.role,
     isActive: user.isActive,
   };
-}
+});
 
 export class AuthorizationError extends Error {
   constructor(

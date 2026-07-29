@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import { Mic, Minus, Plus, Sparkles, Square, Star } from 'lucide-react';
+import { Mic, Minus, Plus, Sparkles, Square, Star, Trash2 } from 'lucide-react';
 import { Badge, Card, Input, Textarea } from '@/components/ui/primitives';
 import { Button } from '@/components/ui/button';
 import { BottomSheet } from '@/components/ui/bottom-sheet';
@@ -363,11 +363,28 @@ function ProductRow({
   shop: MenuShop;
   onCustomise: () => void;
 }) {
-  const { addItem } = useCart();
+  const { cart, addItem, setQuantity } = useCart();
   const { toast } = useToast();
 
   const unavailable = product.availability !== 'AVAILABLE';
   const needsChoices = product.optionGroups.length > 0;
+
+  /**
+   * What this customer already has of *this* product.
+   *
+   * An item with options can sit in the cart as several lines (one "no sugar",
+   * one "extra strong"), so this is a list rather than a single row. Guarded on
+   * `shopId` because the cart holds one shop at a time — without that check, a
+   * cart left over from another shop would show phantom quantities here.
+   */
+  const lines = React.useMemo(
+    () => (cart && cart.shopId === shop.id ? cart.items.filter((i) => i.productId === product.id) : []),
+    [cart, shop.id, product.id],
+  );
+  const inCart = lines.reduce((sum, line) => sum + line.quantity, 0);
+  // Steppable only when there is exactly one line: with two variants in the
+  // cart, "−" has no single obvious meaning, so we do not guess.
+  const singleLine = lines.length === 1 ? lines[0] : null;
 
   function quickAdd() {
     const outcome = addItem(shop, {
@@ -378,11 +395,12 @@ function ProductRow({
       quantity: 1,
       selections: [],
     });
-    toast(
-      outcome === 'replaced'
-        ? `Cart cleared and ${product.name} added — you can only order from one shop at a time.`
-        : `${product.name} added`,
-    );
+    // The stepper that replaces this button is now the confirmation, so the
+    // routine "added" toast is just noise. The shop-switch warning is not
+    // routine — that one still needs saying.
+    if (outcome === 'replaced') {
+      toast(`Cart cleared and ${product.name} added — you can only order from one shop at a time.`);
+    }
   }
 
   return (
@@ -390,6 +408,13 @@ function ProductRow({
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <h3 className="font-bold leading-tight">{product.name}</h3>
+          {/* Scanning the menu should answer "what have I already picked?"
+              without adding up the stepper values one row at a time. */}
+          {inCart > 0 ? (
+            <Badge tone="brand" className="shrink-0">
+              {inCart} added
+            </Badge>
+          ) : null}
           {product.isTodaysSpecial ? (
             <Badge tone="brand" className="shrink-0">
               <Sparkles aria-hidden className="size-3" />
@@ -431,23 +456,123 @@ function ProductRow({
           rounded="field"
           className="h-20 w-24"
         />
-        <Button
-          size="sm"
-          variant={unavailable || !shop.canOrder ? 'secondary' : 'primary'}
-          disabled={unavailable || !shop.canOrder}
-          onClick={needsChoices ? onCustomise : quickAdd}
-          className="-mt-5 w-20 shadow-sm"
-          aria-label={
-            unavailable
-              ? `${product.name} is unavailable`
-              : needsChoices
-                ? `Choose options for ${product.name}`
-                : `Add ${product.name} to cart`
-          }
-        >
-          {unavailable ? 'N/A' : needsChoices ? 'Choose' : 'Add'}
-        </Button>
+
+        {/* Once something is in the cart the button becomes a stepper, so the
+            quantity is adjusted where the customer is already looking rather
+            than by opening the cart and coming back. */}
+        {inCart > 0 && !unavailable && shop.canOrder ? (
+          singleLine ? (
+            <div className="-mt-5 flex w-24 flex-col items-center gap-1">
+              <QuantityStepper
+                className="mt-0"
+                productName={product.name}
+                quantity={singleLine.quantity}
+                onChange={(next) => setQuantity(singleLine.key, next)}
+              />
+              {/* The stepper only adjusts the variant already in the cart.
+                  Without this, a customer who has added one "normal sugar" has
+                  no way left to also order a "no sugar" — the Choose button they
+                  used the first time is gone. */}
+              {needsChoices ? (
+                <button
+                  type="button"
+                  onClick={onCustomise}
+                  className="text-[11px] font-semibold text-brand-600 underline-offset-2 hover:underline"
+                >
+                  Add another
+                </button>
+              ) : null}
+            </div>
+          ) : (
+            // Several variants of the same item — stepping is ambiguous, so we
+            // show the total and send further edits to the cart.
+            <div className="-mt-5 flex w-24 flex-col items-center gap-1">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={onCustomise}
+                className="w-24 shadow-sm"
+                aria-label={`Add another ${product.name}`}
+              >
+                <Plus aria-hidden className="size-3.5" />
+                Add
+              </Button>
+              <span className="text-[11px] font-semibold text-brand-600">{inCart} in cart</span>
+            </div>
+          )
+        ) : (
+          <Button
+            size="sm"
+            variant={unavailable || !shop.canOrder ? 'secondary' : 'primary'}
+            disabled={unavailable || !shop.canOrder}
+            onClick={needsChoices ? onCustomise : quickAdd}
+            className="-mt-5 w-20 shadow-sm"
+            aria-label={
+              unavailable
+                ? `${product.name} is unavailable`
+                : needsChoices
+                  ? `Choose options for ${product.name}`
+                  : `Add ${product.name} to cart`
+            }
+          >
+            {unavailable ? 'N/A' : needsChoices ? 'Choose' : 'Add'}
+          </Button>
+        )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * The in-row quantity control.
+ *
+ * Sized to the same 44px touch target as the Add button it replaces — this is
+ * tapped one-handed, often while walking. Dropping to zero removes the line
+ * entirely, which is what the trash icon at quantity 1 signals: the next tap
+ * takes the item out of the cart rather than leaving an invisible zero.
+ */
+function QuantityStepper({
+  productName,
+  quantity,
+  onChange,
+  className,
+}: {
+  productName: string;
+  quantity: number;
+  onChange: (next: number) => void;
+  className?: string;
+}) {
+  const removing = quantity <= 1;
+
+  return (
+    <div
+      className={cn(
+        '-mt-5 flex w-24 items-center justify-between rounded-[var(--radius-field)] border border-brand-500 bg-surface p-0.5 shadow-sm',
+        className,
+      )}
+    >
+      <button
+        type="button"
+        onClick={() => onChange(quantity - 1)}
+        aria-label={removing ? `Remove ${productName} from cart` : `Reduce ${productName} to ${quantity - 1}`}
+        className="flex size-8 items-center justify-center rounded-md text-brand-600 transition-colors hover:bg-brand-50 dark:hover:bg-brand-900/40"
+      >
+        {removing ? <Trash2 aria-hidden className="size-3.5" /> : <Minus aria-hidden className="size-4" />}
+      </button>
+
+      <span aria-live="polite" className="min-w-5 text-center text-sm font-extrabold tabular-nums text-brand-600">
+        {quantity}
+      </span>
+
+      <button
+        type="button"
+        onClick={() => onChange(quantity + 1)}
+        disabled={quantity >= 50}
+        aria-label={`Increase ${productName} to ${quantity + 1}`}
+        className="flex size-8 items-center justify-center rounded-md text-brand-600 transition-colors hover:bg-brand-50 disabled:opacity-40 dark:hover:bg-brand-900/40"
+      >
+        <Plus aria-hidden className="size-4" />
+      </button>
     </div>
   );
 }
@@ -592,7 +717,18 @@ function CustomiseSheet({
               <div className="space-y-2">
                 {group.options.map((option) => {
                   const isChosen = chosen.includes(option.id);
-                  const atLimit = !isChosen && chosen.length >= group.maxSelect;
+                  /**
+                   * "You have picked enough already" only applies where picking
+                   * more is what you do — a multi-select group.
+                   *
+                   * Without the `maxSelect > 1` guard this disabled every
+                   * unselected option in a *single*-choice group, because one
+                   * choice already meets a limit of one. Required groups
+                   * pre-select their first option, so the effect was that a
+                   * customer could never change a required choice at all: no
+                   * "less sugar", no "no sugar", ever.
+                   */
+                  const atLimit = !isChosen && group.maxSelect > 1 && chosen.length >= group.maxSelect;
                   const disabled = !option.isAvailable || atLimit;
 
                   return (
