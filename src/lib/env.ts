@@ -1,5 +1,6 @@
 import 'server-only';
 import { z } from 'zod';
+import { appUrlSeverity, describeAppUrlProblem } from '@/lib/domain/public-url';
 
 /**
  * Validated server environment.
@@ -64,6 +65,24 @@ if (!parsed.success) {
 }
 
 export const env = parsed.data;
+
+/**
+ * The public address has to be reachable from a stranger's phone, because the
+ * printed poster QR encodes it permanently. See `domain/public-url`.
+ */
+const appUrlProblem = describeAppUrlProblem(env.NEXT_PUBLIC_APP_URL, env.NODE_ENV);
+if (appUrlProblem) {
+  const detail =
+    `${appUrlProblem}\n` +
+    'This address is encoded permanently into printed shop QR posters and into password-reset links.';
+
+  if (appUrlSeverity({ vercelEnv: process.env.VERCEL_ENV, deployed: process.env.DEPLOYED }) === 'fatal') {
+    throw new Error(`Invalid production configuration:\n  • ${detail}`);
+  }
+  // A local production build testing over Wi-Fi is legitimate — say it loudly
+  // and carry on rather than blocking the build.
+  console.warn(`\n[env] WARNING: ${detail}\n`);
+}
 
 /** Real credentials missing → providers fall back to their mock implementation. */
 export const providerReadiness = {

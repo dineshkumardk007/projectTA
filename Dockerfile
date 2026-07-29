@@ -24,6 +24,10 @@ FROM base AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
+# Marks this as a real deployment rather than a local production build, so a
+# localhost/LAN NEXT_PUBLIC_APP_URL refuses to boot instead of silently baking a
+# dead address into every printed shop QR poster. See lib/domain/public-url.
+ENV DEPLOYED=1
 
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
