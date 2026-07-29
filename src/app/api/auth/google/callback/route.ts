@@ -1,7 +1,9 @@
+import crypto from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { env } from '@/lib/env';
 import { SESSION_COOKIE, signSession } from '@/lib/auth/session';
+import { hashPassword } from '@/lib/auth/password';
 import { getRedirectUri } from '../login/route';
 
 const HOME_BY_ROLE: Record<string, string> = {
@@ -82,7 +84,7 @@ export async function GET(request: Request) {
       return NextResponse.redirect(`${appBaseUrl}/signin?error=google_email_missing`);
     }
 
-    // 3. User lookup by email using explicit select (prevents querying non-existent columns)
+    // 3. User lookup by email using explicit select
     let user = await db.user.findUnique({
       where: { email: profile.email },
       select: SAFE_USER_SELECT,
@@ -90,10 +92,15 @@ export async function GET(request: Request) {
 
     if (!user) {
       const displayName = profile.name || profile.email.split('@')[0] || 'User';
+      // Generate a secure random password hash so NOT NULL constraints on passwordHash pass on unmigrated databases
+      const randomPassword = crypto.randomBytes(32).toString('hex');
+      const placeholderHash = await hashPassword(randomPassword);
+
       user = await db.user.create({
         data: {
           name: displayName,
           email: profile.email,
+          passwordHash: placeholderHash,
           role: 'CUSTOMER',
           customerProfile: { create: {} },
         },
