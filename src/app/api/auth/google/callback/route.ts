@@ -11,6 +11,15 @@ const HOME_BY_ROLE: Record<string, string> = {
   ADMIN: '/admin',
 };
 
+const SAFE_USER_SELECT = {
+  id: true,
+  name: true,
+  email: true,
+  role: true,
+  isActive: true,
+  tokenVersion: true,
+} as const;
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const code = searchParams.get('code');
@@ -73,56 +82,23 @@ export async function GET(request: Request) {
       return NextResponse.redirect(`${appBaseUrl}/signin?error=google_email_missing`);
     }
 
-    // 3. Resilient user lookup / creation in Prisma
-    let user = null;
+    // 3. User lookup by email using explicit select (prevents querying non-existent columns)
+    let user = await db.user.findUnique({
+      where: { email: profile.email },
+      select: SAFE_USER_SELECT,
+    });
 
-    try {
-      user = await db.user.findFirst({
-        where: {
-          OR: [{ googleId: profile.sub }, { email: profile.email }],
-        },
-      });
-    } catch {
-      // Fall back to lookup by email only if googleId column is not queryable
-      user = await db.user.findUnique({
-        where: { email: profile.email },
-      });
-    }
-
-    if (user) {
-      if (!user.googleId) {
-        try {
-          user = await db.user.update({
-            where: { id: user.id },
-            data: { googleId: profile.sub },
-          });
-        } catch {
-          // Ignore if googleId update fails
-        }
-      }
-    } else {
+    if (!user) {
       const displayName = profile.name || profile.email.split('@')[0] || 'User';
-      try {
-        user = await db.user.create({
-          data: {
-            name: displayName,
-            email: profile.email,
-            googleId: profile.sub,
-            role: 'CUSTOMER',
-            customerProfile: { create: {} },
-          },
-        });
-      } catch {
-        // Fall back without googleId field if column missing on live DB
-        user = await db.user.create({
-          data: {
-            name: displayName,
-            email: profile.email,
-            role: 'CUSTOMER',
-            customerProfile: { create: {} },
-          },
-        });
-      }
+      user = await db.user.create({
+        data: {
+          name: displayName,
+          email: profile.email,
+          role: 'CUSTOMER',
+          customerProfile: { create: {} },
+        },
+        select: SAFE_USER_SELECT,
+      });
     }
 
     if (!user.isActive) {
