@@ -911,6 +911,25 @@ model PushCampaign {
 // Platform configuration
 // ---------------------------------------------------------------------------
 
+/// One fixed window per throttled action, shared by every server instance.
+///
+/// An in-process counter is worthless on serverless hosting: each instance keeps
+/// its own map, so "ten login attempts a minute" silently becomes ten *per
+/// instance*, and an attacker spreading requests gets as many multiples as the
+/// platform cares to scale to. Exactly the wrong direction — load increases the
+/// allowance.
+///
+/// The counter lives here so all instances contend on one row. Rows are
+/// disposable: `key` encodes the client and action, and an expired window is
+/// reset in place by the same statement that increments it.
+model RateLimit {
+  key     String   @id
+  count   Int      @default(0)
+  resetAt DateTime
+
+  @@index([resetAt])
+}
+
 /// Anything an admin may need to change without a deploy: cancellation policy,
 /// commission rate, subscription pricing. Deliberately schemaless.
 model PlatformSetting {

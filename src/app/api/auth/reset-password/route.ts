@@ -10,7 +10,7 @@ const schema = z.object({
 });
 
 export const POST = route(async (request: Request) => {
-  rateLimit(clientKey(request, 'reset-password'), 10, 60_000);
+  await rateLimit(clientKey(request, 'reset-password'), 10, 60_000);
 
   const body = schema.parse(await request.json());
   await resetPassword(body.token, body.password);

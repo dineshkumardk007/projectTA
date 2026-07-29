@@ -10,7 +10,7 @@ const schema = z.object({ email: emailSchema });
  * registered — anything else turns this into an account-enumeration oracle.
  */
 export const POST = route(async (request: Request) => {
-  rateLimit(clientKey(request, 'forgot-password'), 5, 60_000);
+  await rateLimit(clientKey(request, 'forgot-password'), 5, 60_000);
 
   const body = schema.parse(await request.json());
   await requestPasswordReset(body.email);

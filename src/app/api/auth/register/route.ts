@@ -18,7 +18,7 @@ const bodySchema = registerSchema.extend({
 });
 
 export const POST = route(async (request: Request) => {
-  rateLimit(clientKey(request, 'register'), 5, 60_000);
+  await rateLimit(clientKey(request, 'register'), 5, 60_000);
 
   const body = bodySchema.parse(await request.json());
 

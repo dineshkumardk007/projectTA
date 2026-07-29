@@ -34,7 +34,7 @@ export const POST = route(async (request: Request) => {
   const body = schema.parse(await request.json());
 
   await requireShopAccess(body.shopId, user);
-  rateLimit(clientKey(request, `pickup:${body.shopId}`), 60, 60_000);
+  await rateLimit(clientKey(request, `pickup:${body.shopId}`), 60, 60_000);
 
   let orderId: string | null = null;
   let method: 'QR' | 'ORDER_CODE' | 'MANUAL' = 'MANUAL';

@@ -51,7 +51,7 @@ export const POST = route(async (request: Request) => {
   const user = await requireUser(['MERCHANT', 'STAFF', 'ADMIN']);
   // Generous enough for a merchant photographing a menu in one sitting, tight
   // enough that a stolen session cannot fill the bucket.
-  rateLimit(clientKey(request, `upload:${user.id}`), 30, 60_000);
+  await rateLimit(clientKey(request, `upload:${user.id}`), 30, 60_000);
 
   const form = await request.formData();
   const file = form.get('file');

@@ -34,7 +34,7 @@ export const POST = route(async (request: Request, context: { params: Promise<{ 
   const user = await requireUser(['CUSTOMER']);
 
   // Someone guessing reference numbers should not be able to spray them.
-  rateLimit(clientKey(request, `upi-ref:${user.id}`), 10, 60_000);
+  await rateLimit(clientKey(request, `upi-ref:${user.id}`), 10, 60_000);
 
   const body = submitSchema.parse(await request.json());
   const result = await submitUpiReference(id, user.id, body.reference);

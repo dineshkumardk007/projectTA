@@ -43,7 +43,7 @@ export const POST = route(async (request: Request) => {
     });
   }
 
-  rateLimit(clientKey(request, `campaign:${admin.id}`), 3, 60_000);
+  await rateLimit(clientKey(request, `campaign:${admin.id}`), 3, 60_000);
 
   const campaign = await sendCampaign(
     { title: body.title, body: body.body, href: body.href || undefined, target: body.target },

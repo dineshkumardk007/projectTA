@@ -8,7 +8,7 @@ import { db } from '@/lib/db';
 /** Place a pre-order. */
 export const POST = route(async (request: Request) => {
   const user = await requireUser(['CUSTOMER']);
-  rateLimit(clientKey(request, `order:${user.id}`), 10, 60_000);
+  await rateLimit(clientKey(request, `order:${user.id}`), 10, 60_000);
 
   const body = placeOrderSchema.parse(await request.json());
 

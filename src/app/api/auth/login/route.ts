@@ -6,7 +6,7 @@ import { loginSchema } from '@/lib/validation';
 import { recordSignIn } from '@/lib/services/auth';
 
 export const POST = route(async (request: Request) => {
-  rateLimit(clientKey(request, 'login'), 10, 60_000);
+  await rateLimit(clientKey(request, 'login'), 10, 60_000);
 
   const body = loginSchema.parse(await request.json());
 

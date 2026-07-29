@@ -4,6 +4,7 @@ import { ZodError } from 'zod';
 import { AuthorizationError } from '@/lib/auth/guards';
 import { logger } from '@/lib/logger';
 import { env } from '@/lib/env';
+import { db } from '@/lib/db';
 
 /**
  * Shared API plumbing.
@@ -76,6 +77,9 @@ export function route<Args extends unknown[]>(
   handler: (...args: Args) => Promise<Response>,
 ): (...args: Args) => Promise<Response> {
   return async (...args: Args) => {
+    // Throttled to once every ten minutes and never awaited, so clearing out
+    // expired counters cannot delay a response.
+    sweepRateLimits();
     try {
       return await handler(...args);
     } catch (error) {
@@ -85,45 +89,72 @@ export function route<Args extends unknown[]>(
 }
 
 /**
- * In-memory fixed-window rate limiter.
+ * Fixed-window rate limiter, shared across server instances.
  *
- * Deliberately simple: it protects sign-in and order placement on a single
- * instance. A multi-instance deployment should swap the map for Redis — the
- * call sites do not change.
+ * The counter lives in the database rather than in process memory. On
+ * serverless hosting each instance has its own memory, so an in-process map
+ * turns "ten attempts a minute" into ten *per instance* — an allowance that
+ * grows as the platform scales, which is precisely backwards for a limit whose
+ * job is to survive an attack.
+ *
+ * The increment is a single statement. Read-then-write would let two concurrent
+ * requests both read `count = 9` and both proceed, which under credential
+ * stuffing is the only case that matters.
  */
-const buckets = new Map<string, { count: number; resetAt: number }>();
+export async function rateLimit(key: string, limit: number, windowMs: number): Promise<void> {
+  const resetAt = new Date(Date.now() + windowMs);
 
-/**
- * Expired windows are swept periodically. Without this the map grows by one
- * entry per unique IP+action for the life of the process — a slow but real leak
- * on a long-running server, since keys include client IPs and user ids.
- */
-const SWEEP_INTERVAL_MS = 5 * 60_000;
-let lastSweepAt = Date.now();
-
-function sweepExpired(now: number) {
-  if (now - lastSweepAt < SWEEP_INTERVAL_MS) return;
-  lastSweepAt = now;
-  for (const [key, bucket] of buckets) {
-    if (bucket.resetAt <= now) buckets.delete(key);
-  }
-}
-
-export function rateLimit(key: string, limit: number, windowMs: number) {
-  const now = Date.now();
-  sweepExpired(now);
-  const bucket = buckets.get(key);
-
-  if (!bucket || bucket.resetAt <= now) {
-    buckets.set(key, { count: 1, resetAt: now + windowMs });
+  let rows: { count: number; resetAt: Date }[];
+  try {
+    // The CASE arms are what make an expired window reset itself: the same
+    // statement that increments a live window restarts a dead one, so no
+    // separate expiry pass can race with a request.
+    rows = await db.$queryRaw<{ count: number; resetAt: Date }[]>`
+      INSERT INTO "RateLimit" ("key", "count", "resetAt")
+      VALUES (${key}, 1, ${resetAt})
+      ON CONFLICT ("key") DO UPDATE SET
+        "count"   = CASE WHEN "RateLimit"."resetAt" <= NOW() THEN 1 ELSE "RateLimit"."count" + 1 END,
+        "resetAt" = CASE WHEN "RateLimit"."resetAt" <= NOW() THEN ${resetAt} ELSE "RateLimit"."resetAt" END
+      RETURNING "count", "resetAt"
+    `;
+  } catch (error) {
+    /**
+     * Fail open, loudly.
+     *
+     * Every endpoint behind this limiter needs the database for its actual work,
+     * so a database that cannot count is a database that cannot sign anyone in
+     * either — refusing here would convert an outage into a second, more
+     * confusing outage without protecting anything.
+     */
+    logger.error('[rate-limit] counter unavailable, allowing request', error);
     return;
   }
 
-  bucket.count += 1;
-  if (bucket.count > limit) {
-    const seconds = Math.ceil((bucket.resetAt - now) / 1000);
-    throw new DomainError(`Too many attempts. Please wait ${seconds}s and try again.`, 429, 'rate_limited');
-  }
+  const row = rows[0];
+  if (!row || row.count <= limit) return;
+
+  const seconds = Math.max(1, Math.ceil((row.resetAt.getTime() - Date.now()) / 1000));
+  throw new DomainError(`Too many attempts. Please wait ${seconds}s and try again.`, 429, 'rate_limited');
+}
+
+/**
+ * Drops windows that have already expired.
+ *
+ * Rows are only ever read by key, so leftovers cost storage rather than
+ * correctness — hence a periodic sweep rather than a delete on every request.
+ * Called opportunistically; failure is ignored.
+ */
+const SWEEP_INTERVAL_MS = 10 * 60_000;
+let lastSweepAt = 0;
+
+export function sweepRateLimits(): void {
+  const now = Date.now();
+  if (now - lastSweepAt < SWEEP_INTERVAL_MS) return;
+  lastSweepAt = now;
+
+  void db.rateLimit
+    .deleteMany({ where: { resetAt: { lt: new Date() } } })
+    .catch((error) => logger.warn('[rate-limit] sweep failed', error));
 }
 
 /** Best-effort client identity for rate limiting. */
