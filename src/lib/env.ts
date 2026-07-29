@@ -1,6 +1,7 @@
 import 'server-only';
 import { z } from 'zod';
 import { appUrlSeverity, describeAppUrlProblem } from '@/lib/domain/public-url';
+import { criticalProviders, describeProviders } from '@/lib/domain/provider-health';
 
 /**
  * Validated server environment.
@@ -94,3 +95,39 @@ export const providerReadiness = {
   /** Can merchants be shown a "pay us" QR code yet? */
   platformBilling: env.PLATFORM_UPI_ID.length > 0,
 };
+
+/** A real deployment rather than a laptop. See `domain/public-url`. */
+export const isDeployed = appUrlSeverity({
+  vercelEnv: process.env.VERCEL_ENV,
+  deployed: process.env.DEPLOYED,
+}) === 'fatal';
+
+/** Serverless hosting: read-only disk, discarded between requests. */
+export const isServerless = Boolean(
+  process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.LAMBDA_TASK_ROOT,
+);
+
+/**
+ * Says out loud, once at boot, which integrations will silently do nothing.
+ *
+ * These failures are invisible from inside the app — the email provider returns
+ * success, the push provider reports delivery. Without this the first sign of
+ * trouble is a customer who cannot get back into their account.
+ */
+const broken = criticalProviders(
+  describeProviders({
+    email: { configured: providerReadiness.email, value: env.EMAIL_PROVIDER },
+    push: { configured: providerReadiness.push, value: env.PUSH_PROVIDER },
+    storage: { configured: providerReadiness.storage, value: env.STORAGE_PROVIDER },
+    payments: { configured: providerReadiness.payments, value: env.PAYMENTS_PROVIDER },
+    maps: { configured: providerReadiness.maps, value: env.MAPS_PROVIDER },
+    isDeployed,
+    isServerless,
+  }),
+);
+
+if (broken.length > 0) {
+  console.warn(
+    ['', '[env] These integrations are NOT configured and will fail silently:', ...broken.map((p) => `  • ${p.name}: ${p.consequence}`), ''].join('\n'),
+  );
+}
