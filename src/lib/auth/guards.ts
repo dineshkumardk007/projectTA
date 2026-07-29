@@ -96,46 +96,69 @@ export type ShopAccess = {
 export async function requireShopAccess(shopId: string, user?: AuthedUser): Promise<ShopAccess> {
   const caller = user ?? (await requireUser());
 
-  const shop = await db.shop.findUnique({ where: { id: shopId } });
-  if (!shop) throw new AuthorizationError('Shop not found.', 403);
+  /**
+   * One query, not two.
+   *
+   * The shop, its owning merchant and this caller's staff membership are all
+   * fetched together. Previously the merchant or membership lookup was a second
+   * sequential round trip, which the order board paid on every poll — once every
+   * six seconds, per counter device, all day.
+   *
+   * The staff include is filtered by `userId`, so this never reads the shop's
+   * whole staff list to answer a question about one person.
+   */
+  const record = await db.shop.findUnique({
+    where: { id: shopId },
+    include: {
+      merchant: true,
+      staff: { where: { userId: caller.id }, select: { id: true }, take: 1 },
+    },
+  });
+  if (!record) throw new AuthorizationError('Shop not found.', 403);
+
+  // Separated so `shop` stays a plain `Shop`, exactly as callers expect.
+  const { merchant, staff, ...shop } = record;
 
   if (caller.role === 'ADMIN') {
     return { user: caller, shop, merchant: null };
   }
 
-  if (caller.role === 'MERCHANT') {
-    const merchant = await db.merchant.findUnique({ where: { userId: caller.id } });
-    if (merchant && merchant.id === shop.merchantId) {
-      return { user: caller, shop, merchant };
-    }
+  // Same rule as before, asked from the other direction: does this shop's
+  // merchant belong to the caller, rather than does the caller's merchant own
+  // this shop. Identical outcome, one fewer trip to the database.
+  if (caller.role === 'MERCHANT' && merchant.userId === caller.id) {
+    return { user: caller, shop, merchant };
   }
 
-  if (caller.role === 'STAFF') {
-    const membership = await db.shopStaff.findUnique({
-      where: { shopId_userId: { shopId, userId: caller.id } },
-    });
-    if (membership) return { user: caller, shop, merchant: null };
+  if (caller.role === 'STAFF' && staff.length > 0) {
+    return { user: caller, shop, merchant: null };
   }
 
   throw new AuthorizationError('You do not have access to this shop.', 403);
 }
 
-/** Every shop the caller may operate, newest first. */
+/**
+ * Every shop the caller may operate, newest first.
+ *
+ * Each branch is a single query. The merchant branch used to look up the
+ * merchant row and then its shops in sequence; expressed as a relation filter
+ * it is one trip, and a merchant with no record simply returns nothing — which
+ * is what the explicit guard did anyway. Every merchant screen loads through
+ * here, so this sits on the critical path of the whole dashboard.
+ */
 export async function listAccessibleShops(user: AuthedUser): Promise<Shop[]> {
   if (user.role === 'ADMIN') {
     return db.shop.findMany({ orderBy: { createdAt: 'desc' } });
   }
   if (user.role === 'MERCHANT') {
-    const merchant = await db.merchant.findUnique({ where: { userId: user.id } });
-    if (!merchant) return [];
-    return db.shop.findMany({ where: { merchantId: merchant.id }, orderBy: { createdAt: 'desc' } });
+    return db.shop.findMany({ where: { merchant: { userId: user.id } }, orderBy: { createdAt: 'desc' } });
   }
   if (user.role === 'STAFF') {
-    const memberships = await db.shopStaff.findMany({
-      where: { userId: user.id },
-      include: { shop: true },
+    // Ordered like the others, which the membership-join version was not.
+    return db.shop.findMany({
+      where: { staff: { some: { userId: user.id } } },
+      orderBy: { createdAt: 'desc' },
     });
-    return memberships.map((m) => m.shop);
   }
   return [];
 }

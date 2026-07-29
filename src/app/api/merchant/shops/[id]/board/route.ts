@@ -6,8 +6,11 @@ import { ACTIVE_STATUSES } from '@/lib/domain/order-status';
 /**
  * Live order board data, polled by the merchant dashboard every few seconds.
  *
- * A counter needs to notice a new order without watching the screen, so this is
- * intentionally cheap: one query, no aggregation beyond counting.
+ * A counter needs to notice a new order without watching the screen, so this
+ * endpoint is kept deliberately cheap. Everything below the authorisation check
+ * goes out in **one round trip**: at one poll every six seconds per device, an
+ * extra sequential query is not paid once, it is paid six hundred times an hour
+ * on a connection that may be a phone on mobile data.
  */
 export const GET = route(async (_request: Request, context: { params: Promise<{ id: string }> }) => {
   const { id } = await context.params;
@@ -17,7 +20,7 @@ export const GET = route(async (_request: Request, context: { params: Promise<{ 
   const startOfDay = new Date();
   startOfDay.setHours(0, 0, 0, 0);
 
-  const [orders, todayStats] = await Promise.all([
+  const [orders, todayStats, collectedToday] = await Promise.all([
     db.order.findMany({
       where: {
         shopId: shop.id,
@@ -42,16 +45,14 @@ export const GET = route(async (_request: Request, context: { params: Promise<{ 
       _count: { _all: true },
       _sum: { totalMinor: true },
     }),
+    // "How many collected today" and "how much did that earn" share a filter, so
+    // they are one aggregate rather than a count followed by a sum.
+    db.order.aggregate({
+      where: { shopId: shop.id, status: 'PICKED_UP', pickedUpAt: { gte: startOfDay } },
+      _count: { _all: true },
+      _sum: { totalMinor: true },
+    }),
   ]);
-
-  const completedToday = await db.order.count({
-    where: { shopId: shop.id, status: 'PICKED_UP', pickedUpAt: { gte: startOfDay } },
-  });
-
-  const salesToday = await db.order.aggregate({
-    where: { shopId: shop.id, status: 'PICKED_UP', pickedUpAt: { gte: startOfDay } },
-    _sum: { totalMinor: true },
-  });
 
   return ok({
     shop: { id: shop.id, name: shop.name, status: shop.status, basePrepMinutes: shop.basePrepMinutes },
@@ -89,8 +90,8 @@ export const GET = route(async (_request: Request, context: { params: Promise<{ 
     stats: {
       ordersToday: todayStats._count._all,
       orderedValueToday: todayStats._sum.totalMinor ?? 0,
-      completedToday,
-      salesToday: salesToday._sum.totalMinor ?? 0,
+      completedToday: collectedToday._count._all,
+      salesToday: collectedToday._sum.totalMinor ?? 0,
     },
   });
 });
